@@ -1,5 +1,7 @@
 """Tests for tools/review/review_queue.py. gh and the agent are stubbed; no
 network, no model."""
+import contextlib
+import io
 import json
 import sys
 import unittest
@@ -12,6 +14,12 @@ sys.path.insert(0, str(ROOT / "tools" / "review"))
 import review_queue
 
 HEAD = "abc123def456"
+RIGHTS = "- [x] I have the right to submit this under the project's licences " \
+         "and it contains no ROM data or copied code."
+BODY = f"{RIGHTS}\n\nCloses #12\n"
+CARD_BODY = "### Files you may touch\n\ndocs/**\n\n" \
+            "### Files you must not touch\n\n_No response_\n"
+GREEN = [{"__typename": "CheckRun", "name": "checks", "conclusion": "SUCCESS"}]
 
 
 def make_gh(routes):
@@ -40,31 +48,41 @@ def make_agent(output):
     return agent
 
 
-def pr_view(number, head=HEAD, files=("docs/x.md",), body="Closes #12\n"):
+def pr_view(head=HEAD, rollup=None):
     return json.dumps({
-        "body": body,
         "headRefOid": head,
-        "files": [{"path": p} for p in files],
-        "statusCheckRollup": [{"__typename": "CheckRun", "name": "checks",
-                               "conclusion": "SUCCESS"}],
+        "statusCheckRollup": GREEN if rollup is None else rollup,
     })
 
 
+def files_json(paths):
+    return json.dumps([{"filename": p, "status": "modified"} for p in paths])
+
+
+def issue_json(assoc="OWNER"):
+    return json.dumps({"labels": [{"name": "card:ready"}], "body": CARD_BODY,
+                       "state": "open", "author_association": assoc})
+
+
 def green_pr_routes(number=7, files=("docs/x.md",), head=HEAD,
-                    diff="diff --git a/docs/x.md b/docs/x.md\n+x\n"):
+                    diff="diff --git a/docs/x.md b/docs/x.md\n+x\n",
+                    changed_files=None, rollup=None, assoc="OWNER"):
     return [
         (("repo", "view"), "o/r\n"),
         (("api", "user"), "alice\n"),
         (("pr", "list"), json.dumps([{"number": number}])),
-        (("pr", "view", str(number), "--json",
-          "body,headRefOid,files,statusCheckRollup"),
-         pr_view(number, head=head, files=files)),
+        (("pr", "view", str(number), "--json", "headRefOid,statusCheckRollup"),
+         pr_view(head=head, rollup=rollup)),
+        (("api", f"repos/o/r/pulls/{number}"),
+         json.dumps({"changed_files": changed_files if changed_files is not None
+                     else len(files), "body": BODY})),
+        (("api", "--paginate", f"repos/o/r/pulls/{number}/files"),
+         files_json(files)),
+        (("api", "repos/o/r/issues/12"), issue_json(assoc)),
+        (("api", f"repos/o/r/pulls/{number}/reviews"), "[]"),
+        (("pr", "diff", str(number)), diff),
         (("pr", "view", str(number), "--json", "headRefOid"),
          json.dumps({"headRefOid": head})),
-        (("pr", "diff", str(number)), diff),
-        (("api", "repos/o/r/issues/12"),
-         json.dumps({"labels": [{"name": "card:ready"}], "body": "card"})),
-        (("api", f"repos/o/r/pulls/{number}/reviews"), "[]"),
     ]
 
 
@@ -136,15 +154,22 @@ class RunTests(unittest.TestCase):
             (("repo", "view"), "o/r\n"),
             (("api", "user"), "alice\n"),
             (("pr", "list"), '[{"number": 7}, {"number": 8}]'),
-            (("pr", "view", "7", "--json",
-              "body,headRefOid,files,statusCheckRollup"),
-             pr_view(7, files=("tools/ci/scan.py",))),
-            (("pr", "view", "8", "--json",
-              "body,headRefOid,files,statusCheckRollup"),
-             pr_view(8, files=("img/x.png",))),
+            (("pr", "view", "7", "--json", "headRefOid,statusCheckRollup"),
+             pr_view()),
+            (("api", "repos/o/r/pulls/7"),
+             json.dumps({"changed_files": 1, "body": BODY})),
+            (("api", "--paginate", "repos/o/r/pulls/7/files"),
+             files_json(("tools/ci/scan.py",))),
+            (("pr", "view", "8", "--json", "headRefOid,statusCheckRollup"),
+             pr_view()),
+            (("api", "repos/o/r/pulls/8"),
+             json.dumps({"changed_files": 1, "body": BODY})),
+            (("api", "--paginate", "repos/o/r/pulls/8/files"),
+             files_json(("docs/x.png",))),
+            (("api", "repos/o/r/issues/12"), issue_json()),
             (("pr", "diff", "8"),
-             "diff --git a/img/x.png b/img/x.png\n"
-             "Binary files /dev/null and b/img/x.png differ\n"),
+             "diff --git a/docs/x.png b/docs/x.png\n"
+             "Binary files /dev/null and b/docs/x.png differ\n"),
         ]
         gh = make_gh(routes)
         agent = make_agent(APPROVE_OUT)
@@ -189,6 +214,56 @@ class RunTests(unittest.TestCase):
         self.assertIn(f"commit_id={HEAD}", posts[0])
         self.assertIn("event=APPROVE", posts[0])
         self.assertFalse([c for c in gh.calls if c[:2] == ("pr", "review")])
+
+
+class DeterministicCheckTests(unittest.TestCase):
+    """The runner re-runs the CI checks itself instead of trusting a status."""
+
+    def run_silent(self, gh, agent):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = review_queue.run(["echo"], dry_run=True, gh=gh, agent=agent)
+        return rc, buf.getvalue()
+
+    def test_padding_files_cannot_hide_protected_path(self):
+        # 100 padding files sort before the protected one; the full paginated
+        # list must still catch it.
+        files = tuple(f"docs/pad-{i:03}.md" for i in range(100)) \
+            + ("tools/ci/scan.py",)
+        gh = make_gh(green_pr_routes(files=files))
+        agent = make_agent(APPROVE_OUT)
+        rc, out = self.run_silent(gh, agent)
+        self.assertEqual(rc, 0)
+        self.assertEqual(agent.calls, [])
+        self.assertIn("protected: tools/ci/scan.py", out)
+
+    def test_changed_files_mismatch_skips(self):
+        gh = make_gh(green_pr_routes(changed_files=5))  # only 1 file listed
+        agent = make_agent(APPROVE_OUT)
+        rc, out = self.run_silent(gh, agent)
+        self.assertEqual(rc, 0)
+        self.assertEqual(agent.calls, [])
+        self.assertIn("file count", out)
+
+    def test_all_checks_runs_must_pass(self):
+        mixed = [{"__typename": "CheckRun", "name": "checks",
+                  "conclusion": "SUCCESS"},
+                 {"__typename": "StatusContext", "context": "checks",
+                  "state": "FAILURE"}]
+        for rollup in (mixed, []):  # one failing, and none at all
+            gh = make_gh(green_pr_routes(rollup=rollup))
+            agent = make_agent(APPROVE_OUT)
+            rc, out = self.run_silent(gh, agent)
+            self.assertEqual(rc, 0)
+            self.assertEqual(agent.calls, [])
+
+    def test_non_core_card_skips(self):
+        gh = make_gh(green_pr_routes(assoc="CONTRIBUTOR"))
+        agent = make_agent(APPROVE_OUT)
+        rc, out = self.run_silent(gh, agent)
+        self.assertEqual(rc, 0)
+        self.assertEqual(agent.calls, [])
+        self.assertIn("core member", out)
 
 
 if __name__ == "__main__":

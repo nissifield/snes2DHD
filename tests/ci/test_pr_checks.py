@@ -50,6 +50,19 @@ class PrBodyTests(unittest.TestCase):
     def test_pr_body_unticked(self):
         self.assertEqual(len(pr_checks.check_pr_body(f"{UNTICKED}\n\nCloses #12\n")), 1)
 
+    def test_rights_line_curly_apostrophe_ok(self):
+        curly = RIGHTS.replace("'", "’")
+        self.assertEqual(pr_checks.check_pr_body(f"{curly}\n\nCloses #12\n"), [])
+
+    def test_rights_line_uppercase_x_ok(self):
+        self.assertEqual(
+            pr_checks.check_pr_body(f"{RIGHTS.replace('[x]', '[X]')}\n\nCloses #12\n"),
+            [])
+
+    def test_rights_error_shows_expected(self):
+        errors = pr_checks.check_pr_body("no rights line\n\nCloses #12\n")
+        self.assertTrue(any(RIGHTS in e for e in errors))
+
     def test_pr_body_no_closes(self):
         errors = pr_checks.check_pr_body(f"{RIGHTS}\n")
         self.assertTrue(any("closing" in e for e in errors))

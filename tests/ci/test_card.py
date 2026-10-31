@@ -51,6 +51,11 @@ class CardTests(unittest.TestCase):
         self.assertTrue(card.is_protected("LICENSES/CC-BY-SA-4.0.txt"))
         self.assertFalse(card.is_protected("docs/x.md"))
 
+    def test_protected_admin_and_test_dirs(self):
+        self.assertTrue(card.is_protected("tools/admin/apply-settings.sh"))
+        self.assertTrue(card.is_protected("tests/ci/test_scan.py"))
+        self.assertTrue(card.is_protected("tests/review/test_review_queue.py"))
+
     def test_protected_case_insensitive(self):
         self.assertTrue(card.is_protected("license.md"))
         self.assertTrue(card.is_protected("Tools/CI/scan.py"))

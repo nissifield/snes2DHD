@@ -1,39 +1,38 @@
 name: checks
 
+# SECURITY: pull_request_target — never execute code from pr/. Only read files.
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened, edited]
 
-# Read-only: this workflow checks out untrusted PR code and must never write.
 permissions:
   contents: read
   issues: read
   pull-requests: read
+
+concurrency:
+  group: checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   checks:
     name: checks
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout base SHA
+      # pull_request_target's default ref is the base branch: trusted code only.
+      - name: Checkout base branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           path: _base
-          ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
 
-      - name: Checkout PR head
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          path: pr
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-
-      # The three-dot diff needs the base SHA object; the base tip is not
-      # necessarily an ancestor of the PR head.
-      - name: Fetch base SHA into PR checkout
-        run: git -C pr fetch --no-tags origin ${{ github.event.pull_request.base.sha }}
+      # The PR head is data, never executed. Fetched without credentials and
+      # checked out with hooks disabled; nothing from pr/ is ever run.
+      - name: Fetch PR head (data only)
+        run: |
+          git init -q pr
+          git -C pr fetch --no-tags https://github.com/${{ github.repository }} +refs/pull/${{ github.event.pull_request.number }}/head:refs/pr/head ${{ github.event.pull_request.base.sha }}
+          git -C pr -c core.hooksPath=/dev/null -c filter.lfs.smudge= -c filter.lfs.process= -c filter.lfs.required=false checkout -q --detach refs/pr/head
 
       # Checks always run the base branch's copy, never the PR's.
       - name: Run PR checks

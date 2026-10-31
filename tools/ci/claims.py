@@ -5,14 +5,20 @@ code a PR carries can never affect it. All network goes through one
 injectable `request(method, url, data)` callable, like pr_checks.fetch.
 
 Claimed-at is the time of the issue's most recent "assigned" event (from
-the events API), never a value the commenter can forge.
+the events API), never a value the commenter can forge. Decisions use a
+freshly fetched issue, never the event's snapshot.
 """
 import json
 import os
+import sys
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Literal, NamedTuple
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import pr_checks
 
 READY_LABEL = "card:ready"
 CLAIM_LABEL = "card:claimed"
@@ -26,23 +32,33 @@ class Action(NamedTuple):
 
 
 def decide(comment: str, author: str, labels: list[str], assignees: list[str],
-           now: datetime, claimed_at: datetime | None = None) -> Action:
-    """Map a comment to an action. Only the first token is a command."""
+           now: datetime, claimed_at: datetime | None = None,
+           other_claims: list[int] = ()) -> Action:
+    """Map a comment to an action. Only the first token is a command.
+
+    Replies only when something changes, plus one "already claimed" reply
+    per /claim on a real card; non-card issues get silence."""
     tokens = comment.split()
     if not tokens or tokens[0] not in ("/claim", "/unclaim"):
         return Action("none", "")
     if tokens[0] == "/claim":
         if CLAIM_LABEL in labels or assignees:
+            if not any(l in CARD_LABELS for l in labels):
+                return Action("none", "")
             who = f" by @{assignees[0]}" if assignees else ""
             when = f" on {claimed_at:%Y-%m-%d}" if claimed_at else ""
             return Action("reply", f"This card is already claimed{who}{when}.")
         if READY_LABEL not in labels:
-            return Action("reply", "This issue is not a claimable card.")
+            return Action("none", "")  # draft or non-card: nothing to say
+        if other_claims:
+            return Action("reply",
+                          f"You already have an open claim on "
+                          f"#{other_claims[0]}; finish or `/unclaim` it first.")
         return Action("assign",
                       f"@{author} claimed this card on {now:%Y-%m-%d}. Without an "
                       f"open PR the claim expires after {EXPIRE_DAYS} days. "
                       f"Comment `/unclaim` to release it.")
-    if author in assignees:
+    if CLAIM_LABEL in labels and author in assignees:
         return Action("unassign",
                       f"@{author} released this card; it is ready to claim again.")
     return Action("none", "")
@@ -67,6 +83,21 @@ def expire(issues: list[dict], now: datetime, days: int = EXPIRE_DAYS) -> list[i
     return stale
 
 
+class Page(list):
+    """One page of a list endpoint; next_url is the Link rel="next" target."""
+    def __init__(self, items, next_url=None):
+        super().__init__(items)
+        self.next_url = next_url
+
+
+def _next_link(header: str) -> str | None:
+    for part in header.split(","):
+        url, _, rel = part.partition(";")
+        if rel.strip() == 'rel="next"':
+            return url.strip().strip("<>")
+    return None
+
+
 def _request(method: str, url: str, data: dict | None = None) -> object:
     body = json.dumps(data).encode() if data is not None else None
     req = urllib.request.Request(url, data=body, method=method, headers={
@@ -75,26 +106,45 @@ def _request(method: str, url: str, data: dict | None = None) -> object:
     })
     with urllib.request.urlopen(req, timeout=20) as resp:
         payload = resp.read()
-    return json.loads(payload) if payload else {}
+        link = resp.headers.get("Link", "")
+    parsed = json.loads(payload) if payload else {}
+    if isinstance(parsed, list):
+        return Page(parsed, _next_link(link))
+    return parsed
 
 
 Request = Callable[[str, str, dict | None], object]
 
 
+def _paginate(request: Request, url: str) -> list:
+    """All items of a list endpoint, following Link rel="next"."""
+    items = []
+    url = url + ("&" if "?" in url else "?") + "per_page=100"
+    while url:
+        page = request("GET", url, None)
+        items.extend(page)
+        url = getattr(page, "next_url", None)
+    return items
+
+
 def _claimed_at(request: Request, events_url: str) -> str | None:
     """ISO time of the most recent assignment, from issue events."""
-    events = request("GET", events_url + "?per_page=100", None)
+    events = _paginate(request, events_url)
     times = [e["created_at"] for e in events if e.get("event") == "assigned"]
     return max(times) if times else None
 
 
-def _has_open_pr(request: Request, timeline_url: str) -> bool:
-    """True when the timeline shows a cross-referenced PR that is still open."""
-    events = request("GET", timeline_url + "?per_page=100", None)
-    for e in events:
-        if e.get("event") == "cross-referenced":
-            src = e.get("source", {}).get("issue", {})
-            if src.get("pull_request") and src.get("state") == "open":
+def _has_open_pr(request: Request, repo: str, number: int, claimer: str) -> bool:
+    """True when the claimer has an open PR whose body closes this issue.
+    Anyone else's PR, or a bare mention, does not keep a claim alive."""
+    if not claimer:
+        return False
+    for pr in _paginate(request, f"{repo}/pulls?state=open"):
+        if pr.get("user", {}).get("login") != claimer:
+            continue
+        for m in pr_checks.CLOSES_RE.finditer(pr.get("body") or ""):
+            if not (m.group("prefix") or m.group("url")) \
+                    and m.group("num") == str(number):
                 return True
     return False
 
@@ -114,23 +164,39 @@ def main(event_path: str, request: Request | None = None) -> int:
     event_name = os.environ.get("GITHUB_EVENT_NAME", "")
 
     if event_name == "issue_comment":
-        issue = event["issue"]
-        if "pull_request" in issue:
+        if "pull_request" in event["issue"]:
             return 0  # commands on PRs are ignored
+        number = event["issue"]["number"]
+        live = request("GET", f"{repo}/issues/{number}", None)
+        if live.get("state") != "open" or "pull_request" in live:
+            return 0
         comment = event["comment"]
         author = comment["user"]["login"]
-        labels = [l["name"] for l in issue.get("labels", [])]
-        assignees = [a["login"] for a in issue.get("assignees", [])]
-        claimed = _claimed_at(request, issue["events_url"]) \
+        labels = [l["name"] for l in live.get("labels", [])]
+        assignees = [a["login"] for a in live.get("assignees", [])]
+        body = comment.get("body") or ""
+        other = []
+        if body.split()[:1] == ["/claim"] and READY_LABEL in labels:
+            mine = _paginate(request, f"{repo}/issues?state=open"
+                                      f"&labels={CLAIM_LABEL}&assignee={author}")
+            other = [i["number"] for i in mine
+                     if i["number"] != number and "pull_request" not in i]
+        claimed = _claimed_at(request, live["events_url"]) \
             if CLAIM_LABEL in labels else None
         claimed_dt = datetime.fromisoformat(claimed) if claimed else None
-        action = decide(comment.get("body") or "", author, labels, assignees,
-                        datetime.now(timezone.utc), claimed_dt)
-        number = issue["number"]
+        action = decide(body, author, labels, assignees,
+                        datetime.now(timezone.utc), claimed_dt, other)
         if action.kind == "assign":
-            request("POST", f"{repo}/issues/{number}/assignees",
-                    {"assignees": [author]})
-            _swap_labels(request, repo, number, READY_LABEL, CLAIM_LABEL)
+            resp = request("POST", f"{repo}/issues/{number}/assignees",
+                           {"assignees": [author]})
+            if author not in [a.get("login") for a in resp.get("assignees", [])]:
+                # GitHub silently refuses some assignees; a claimed label with
+                # nobody assigned would never expire, so don't swap labels.
+                action = Action("reply",
+                                "GitHub would not assign you — comment on the "
+                                "issue first / check your account")
+            else:
+                _swap_labels(request, repo, number, READY_LABEL, CLAIM_LABEL)
         elif action.kind == "unassign":
             request("DELETE", f"{repo}/issues/{number}/assignees",
                     {"assignees": [author]})
@@ -139,18 +205,20 @@ def main(event_path: str, request: Request | None = None) -> int:
             request("POST", f"{repo}/issues/{number}/comments",
                     {"body": action.message})
     elif event_name == "schedule":
-        found = request("GET", f"{repo}/issues?state=open"
-                               f"&labels={CLAIM_LABEL}&per_page=100", None)
+        found = _paginate(request, f"{repo}/issues?state=open"
+                                   f"&labels={CLAIM_LABEL}")
         rows = []
         for i in found:
             if "pull_request" in i:  # issues list includes PRs
                 continue
+            assignees = [a["login"] for a in i.get("assignees", [])]
             rows.append({
                 "number": i["number"],
                 "labels": [l["name"] for l in i.get("labels", [])],
-                "assignees": [a["login"] for a in i.get("assignees", [])],
+                "assignees": assignees,
                 "claimed_at": _claimed_at(request, i["events_url"]),
-                "has_open_pr": _has_open_pr(request, i["timeline_url"]),
+                "has_open_pr": _has_open_pr(request, repo, i["number"],
+                                            assignees[0] if assignees else ""),
             })
         now = datetime.now(timezone.utc)
         for row in rows:

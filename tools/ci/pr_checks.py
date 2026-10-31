@@ -36,8 +36,11 @@ CORE_ASSOCIATIONS = ("OWNER", "MEMBER")
 
 def check_pr_body(body: str) -> list[str]:
     errors = []
-    if RIGHTS_BOX not in body:
-        errors.append("rights checkbox not ticked (exact text required)")
+    # Browser chats turn ' into ’ and [x] into [X]; accept those spellings.
+    normalised = body.replace("’", "'").replace("‘", "'").replace("[X]", "[x]")
+    if RIGHTS_BOX not in normalised:
+        errors.append("rights checkbox not ticked; expected exactly:\n"
+                      + RIGHTS_BOX)
     closes = list(CLOSES_RE.finditer(body))
     if len(closes) != 1:
         errors.append(f"expected exactly one issue-closing reference, found {len(closes)}")
