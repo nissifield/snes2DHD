@@ -56,6 +56,10 @@ TOKEN_REQUEST = {"repositories": ["snes2DHD"],
                                  "issues": "write", "metadata": "read"}}
 
 
+# A prompt-injected agent can read local files; never publish what looks like a secret.
+SECRET_RE = re.compile(r"-----BEGIN|PRIVATE KEY|\bgh[opsur]_[A-Za-z0-9]{20,}|github_pat_")
+
+
 class AppAuthError(Exception):
     """Fixed message only: never a key, JWT, token or response body."""
 
@@ -107,6 +111,8 @@ def app_jwt(key: str, now: float) -> str:
                        for p in ({"alg": "RS256", "typ": "JWT"}, claims))
     if not os.access(key, os.R_OK):
         raise AppAuthError("app key missing or unreadable")
+    if os.stat(key).st_mode & 0o077:
+        raise AppAuthError("app key readable by others")
     try:
         sig = subprocess.run(["openssl", "dgst", "-sha256", "-sign", key],
                              input=signing.encode(), capture_output=True)
@@ -271,9 +277,17 @@ def _review_pr(gh: Gh, git: Git, agent: Agent, agent_cmd: list[str],
     # concatenate pages into invalid JSON.
     pages = json.loads(gh("api", "--paginate", "--slurp",
                           f"repos/{repo}/pulls/{number}/reviews"))
-    if any(r.get("user", {}).get("login") == me and r.get("commit_id") == head
-           for page in pages for r in page):
+    mine = [r for page in pages for r in page
+            if r.get("user", {}).get("login") == me and r.get("commit_id") == head]
+    if mine:
         print(f"PR #{number}: already reviewed at {head[:7]}, skipping")
+        # a failed merge call after the approval would otherwise strand the PR
+        if not dry_run and any(r.get("state") == "APPROVED" for r in mine):
+            try:
+                gh("pr", "merge", str(number), "--auto", "--squash",
+                   "--match-head-commit", head)
+            except subprocess.CalledProcessError:
+                pass  # already enabled, or GitHub refused; nothing to undo
         return
     # no ext-diff/textconv: diff drivers from config never run on PR blobs
     diff = git("diff", "--no-ext-diff", "--no-textconv", f"{base}...{head}")
@@ -282,6 +296,9 @@ def _review_pr(gh: Gh, git: Git, agent: Agent, agent_cmd: list[str],
     verdict = parse_verdict(out, "pr")
     if verdict is None:
         print(f"PR #{number}: no strict verdict, nothing posted")
+        return
+    if SECRET_RE.search(out):
+        print(f"PR #{number}: agent output looks like a secret, nothing posted")
         return
     # the review only applies to the head we reviewed
     new_head = json.loads(gh("pr", "view", str(number), "--json",
@@ -313,6 +330,9 @@ def _review_card(gh: Gh, agent: Agent, agent_cmd: list[str], role_md: str,
     if verdict is None:
         print(f"issue #{number}: no strict verdict, nothing posted")
         return
+    if SECRET_RE.search(out):
+        print(f"issue #{number}: agent output looks like a secret, nothing posted")
+        return
     if dry_run:
         print(f"issue #{number}: DRY RUN, would post {verdict}:")
         print(out)
@@ -336,10 +356,8 @@ def run(agent_cmd: list[str], dry_run: bool = True, gh: Gh | None = None,
         issues = json.loads(gh("issue", "list", "--state", "open", "--label",
                                "card:draft", "--json", "number,body,author"))
         # Issue forms add card:draft for anyone; only core-authored drafts count.
-        # shortcut: core = the member running this; add a core list when there are more members
-        # The app token can't read /user; its key is owner-managed, so live = owner.
-        core = {gh("api", "user", "--jq", ".login").strip()} if dry_run \
-            else {OWNER}
+        # shortcut: core = the owner; add a core list when there are more members
+        core = {OWNER}
         for issue in issues:
             if issue.get("author", {}).get("login") not in core:
                 print(f"issue #{issue['number']}: not authored by a core member, skipping")
@@ -354,7 +372,8 @@ def run(agent_cmd: list[str], dry_run: bool = True, gh: Gh | None = None,
         return rc
     repo = gh("repo", "view", "--json", "nameWithOwner", "--jq",
               ".nameWithOwner").strip()
-    me = gh("api", "user", "--jq", ".login").strip() if dry_run else APP_LOGIN
+    # live posts as the app, so dry run previews against the app's reviews too
+    me = APP_LOGIN
     prs = json.loads(gh("pr", "list", "--state", "open", "--limit", "1000",
                          "--json", "number"))
     for pr in prs:

@@ -23,9 +23,14 @@ prompt is piped to it on stdin.
 `gh` call gets a short-lived installation token signed with the app key at
 `~/.config/snes2dhd/chores-app.pem` (outside the repo, owner-managed). If no
 token can be minted it exits non-zero and posts nothing. Dry run needs no key.
+The key must be mode 600.
+
+The agent reads untrusted diffs, so give it no access to `~/.config/` (the app
+key and your gh login live there); see the first example. As a backstop the
+runner refuses to post output that looks like a key or token.
 
 ## Examples
 
-    python3 tools/review/review_queue.py -- claude -p --permission-mode plan
+    python3 tools/review/review_queue.py -- claude -p --permission-mode plan --disallowedTools 'Read(~/.config/**)'
     python3 tools/review/review_queue.py --live -- codex exec --sandbox read-only -
     python3 tools/review/review_queue.py --cards -- kimi -p

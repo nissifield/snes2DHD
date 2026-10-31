@@ -233,7 +233,7 @@ class RunTests(QueueTestCase):
         self.assertIn("binary file needs a core member: docs/x.png", out)
 
     def test_card_ok_swaps_label_live_only(self):
-        # dry run reads core from /user; live (the app) uses OWNER
+        # core = OWNER in both modes; the app token can't read /user
         routes = [
             (("api", "user"), f"{review_queue.OWNER}\n"),
             (("issue", "list"),
@@ -278,7 +278,7 @@ class RunTests(QueueTestCase):
         # my review at this head is on the second page of /reviews
         git, heads = make_repo(self, {7: {"docs/x.md": b"x\n"}})
         pages = json.dumps([[{"user": {"login": "bob"}, "commit_id": heads[7]}],
-                            [{"user": {"login": "alice"},
+                            [{"user": {"login": review_queue.APP_LOGIN},
                               "commit_id": heads[7]}]])
         gh = make_gh(queue_routes([7]) + pr_routes(7, heads[7], reviews=pages))
         agent = make_agent(APPROVE_OUT)
@@ -538,6 +538,56 @@ class AppTokenTests(QueueTestCase):
         # the app token can't read /user, so live never asks
         self.assertFalse([c for c in stub.calls if c[:2] == ("api", "user")])
 
+    def test_secret_shaped_output_never_posted(self):
+        leak = ("-----BEGIN RSA PRIVATE KEY-----", "ghs_" + "a" * 36,
+                "github_pat_" + "b" * 40)
+        for secret in leak:
+            with self.subTest(secret=secret[:12]):
+                gh, git, head = self.pr()
+                gh = make_gh([(("api", "-X", "POST"), "{}"), (("pr", "merge"), "")]
+                             + queue_routes([7]) + pr_routes(7, head))
+                rc, out = self.run_silent(
+                    gh, git, make_agent(f"{secret}\nVERDICT: APPROVE\n"),
+                    dry_run=False)
+                self.assertEqual(posted(gh), [])
+                self.assertIn("looks like a secret", out)
+                self.assertNotIn(secret, out)
+        routes = [(("issue", "list"), json.dumps([{"number": 3, "body": "d",
+                    "author": {"login": review_queue.OWNER}}])),
+                  (("issue", "comment"), "")]
+        gh = make_gh(routes)
+        with contextlib.redirect_stdout(io.StringIO()):
+            review_queue.run(["echo"], dry_run=False, gh=gh, cards=True,
+                             agent=make_agent(f"{leak[0]}\nVERDICT: CARD_FIX\n"))
+        self.assertFalse([c for c in gh.calls if c[:2] == ("issue", "comment")])
+
+    def test_approved_without_merge_retries_auto_merge(self):
+        git, heads = make_repo(self, {7: {"docs/x.md": b"x\n"}})
+        pages = json.dumps([[{"user": {"login": review_queue.APP_LOGIN},
+                              "commit_id": heads[7], "state": "APPROVED"}]])
+
+        def merge_fails(args):
+            raise subprocess.CalledProcessError(1, ["gh", *args])
+        for merge in ((("pr", "merge"), ""), (("pr", "merge"), merge_fails)):
+            gh = make_gh([merge] + queue_routes([7])
+                         + pr_routes(7, heads[7], reviews=pages))
+            agent = make_agent(APPROVE_OUT)
+            rc, _ = self.run_silent(gh, git, agent, dry_run=False)
+            self.assertEqual(rc, 0)
+            self.assertEqual(agent.calls, [])  # no second review
+            self.assertEqual([c[-1] for c in gh.calls if c[:2] == ("pr", "merge")],
+                             [heads[7]])
+        gh = make_gh(queue_routes([7]) + pr_routes(7, heads[7], reviews=pages))
+        self.run_silent(gh, git, make_agent(APPROVE_OUT))  # dry run: no merge
+        self.assertFalse([c for c in gh.calls if c[:2] == ("pr", "merge")])
+
+    def test_group_readable_key_refused(self):
+        loose = self.tmp / "loose.pem"
+        shutil.copy(self.key, loose)
+        loose.chmod(0o640)
+        with self.assertRaisesRegex(review_queue.AppAuthError, "readable by others"):
+            review_queue.app_jwt(str(loose), 1_000_000)
+
     def test_live_dedup_uses_app_login(self):
         git, heads = make_repo(self, {7: {"docs/x.md": b"x\n"}})
         pages = json.dumps([[{"user": {"login": review_queue.APP_LOGIN},
@@ -551,6 +601,7 @@ class AppTokenTests(QueueTestCase):
     def test_fail_closed(self):
         garbage = self.tmp / "garbage.pem"
         garbage.write_text("not a key\n")
+        garbage.chmod(0o600)
         http = urllib.error.HTTPError(
             "https://api.github.com/x", 401, "Unauthorized", {},
             io.BytesIO(b'{"message": "ghs_leaked body"}'))
