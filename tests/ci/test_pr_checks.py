@@ -1,4 +1,6 @@
 """Tests for tools/ci/pr_checks.py. main() runs against a real temp git repo + stub fetch."""
+import contextlib
+import io
 import json
 import os
 import subprocess
@@ -60,6 +62,17 @@ class PrBodyTests(unittest.TestCase):
         errors = pr_checks.check_pr_body(f"{RIGHTS}\n\nCloses other/repo#12\n")
         self.assertTrue(any("this repo" in e for e in errors))
 
+    def test_closing_keyword_colon_counted(self):
+        self.assertEqual(pr_checks.check_pr_body(f"{RIGHTS}\n\nFixes: #12\n"), [])
+
+    def test_closing_keyword_url_counted(self):
+        body = f"{RIGHTS}\n\nCloses #12\nfixes https://github.com/o/r/issues/99\n"
+        errors = pr_checks.check_pr_body(body)
+        self.assertTrue(any("exactly one" in e for e in errors))
+        alone = pr_checks.check_pr_body(
+            f"{RIGHTS}\n\nfixes https://github.com/o/r/issues/12\n")
+        self.assertTrue(any("this repo" in e for e in alone))
+
     def test_card_not_ready(self):
         self.assertEqual(pr_checks.check_labels(["card:ready"]), [])
         self.assertEqual(pr_checks.check_labels(["card:claimed"]), [])
@@ -70,7 +83,8 @@ class PrBodyTests(unittest.TestCase):
         self.assertEqual(pr_checks.check_card_trust(good), [])
         closed = {"state": "closed", "author_association": "OWNER"}
         outsider = {"state": "open", "author_association": "CONTRIBUTOR"}
-        for bad in (closed, outsider):
+        collab = {"state": "open", "author_association": "COLLABORATOR"}
+        for bad in (closed, outsider, collab):
             self.assertEqual(pr_checks.check_card_trust(bad),
                              ["card not authored by a core member"])
 
@@ -177,6 +191,16 @@ class ChangesFromGitTests(RepoTests):
         with self.assertRaisesRegex(ValueError, "unsupported status T: link.md"):
             pr_checks.changes_from_git(str(self.repo), self.base, head)
 
+    def test_three_dot_ignores_base_changes(self):
+        git(self.repo, "checkout", "-qb", "feature")
+        self.write_files({"docs/x.md": "branch\n"})
+        head = self.commit("head")
+        git(self.repo, "checkout", "-q", "main")
+        self.write_files({"README.md": "main moved on\n"})
+        self.commit("main2")
+        changes = pr_checks.changes_from_git(str(self.repo), self.base, head)
+        self.assertEqual(changes, [("A", "docs/x.md", None)])
+
 
 class MainTests(RepoTests):
     def run_main(self, body, labels=("card:ready",), state="open",
@@ -269,6 +293,16 @@ class MainTests(RepoTests):
         self.write_files({f"docs/f{i:02}.md": f"file {i}\n" for i in range(35)})
         self.head = self.commit("head")
         self.assertEqual(self.run_main(f"{RIGHTS}\n\nCloses #12\n"), 0)
+
+    def test_binary_file_needs_core(self):
+        self.write_files({"docs/x.bin": b"\xff\xfe\x00\x01"})
+        self.head = self.commit("head")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = self.run_main(f"{RIGHTS}\n\nCloses #12\n")
+        self.assertEqual(rc, 1)
+        self.assertIn("binary file needs a core member: docs/x.bin",
+                      buf.getvalue())
 
 
 if __name__ == "__main__":

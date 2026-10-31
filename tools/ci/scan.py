@@ -12,11 +12,16 @@ from typing import NamedTuple
 
 ROM_EXTENSIONS = frozenset({".sfc", ".smc", ".fig", ".swc", ".bs", ".srm", ".state"})
 ARCHIVE_EXTENSIONS = frozenset({".zip", ".7z", ".rar", ".gz", ".tar"})
-IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".webp", ".svg"})
+IMAGE_EXTENSIONS = frozenset({".png", ".svg"})
+UNSUPPORTED_IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".webp"})
 ARCHIVE_MAGICS = (b"PK\x03\x04", b"7z\xbc\xaf\x27\x1c", b"Rar!\x1a\x07", b"\x1f\x8b",
                   b"\xfd7zXZ\x00", b"BZh", b"\x28\xb5\x2f\xfd")
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
-JPEG_MAGIC = b"\xff\xd8\xff"
+# Standard PNG chunks only; private chunks can hide data too.
+PNG_CHUNKS = frozenset({b"IHDR", b"PLTE", b"IDAT", b"IEND", b"tRNS", b"gAMA",
+                        b"cHRM", b"sRGB", b"iCCP", b"sBIT", b"pHYs", b"bKGD",
+                        b"tIME", b"tEXt", b"zTXt", b"iTXt"})
+LFS_POINTER = b"version https://git-lfs"
 HEADER_OFFSETS = (0x7FDC, 0xFFDC, 0x7FDC + 0x200, 0xFFDC + 0x200)
 MAP_MODES = frozenset({0x20, 0x21, 0x22, 0x23, 0x25, 0x30, 0x31, 0x32, 0x35})
 MIN_HEADER_SIZE = 32 * 1024
@@ -24,6 +29,8 @@ SIZE_LIMIT = 1024 * 1024
 BRANDING_SIZE_LIMIT = 4 * 1024 * 1024
 TEXT_SIZE_LIMIT = 256 * 1024
 BLOB_RUN = re.compile(rb"[A-Za-z0-9+/=]{4096,}")
+HEX_BYTE = re.compile(rb"0x[0-9A-Fa-f]{2}")
+HEX_BYTE_LIMIT = 2048
 
 
 class Finding(NamedTuple):
@@ -43,15 +50,24 @@ def _has_snes_header(data: bytes) -> int | None:
     return None
 
 
-def _image_magic_ok(suffix: str, data: bytes, is_text: bool) -> bool:
-    if suffix == ".png":
-        return data.startswith(PNG_MAGIC)
-    if suffix in (".jpg", ".jpeg"):
-        # shortcut: JPEG trailing data not checked, add EOI parsing if JPEGs appear
-        return data.startswith(JPEG_MAGIC)
-    if suffix == ".webp":
-        return data[:4] == b"RIFF" and data[8:12] == b"WEBP"
-    return is_text  # .svg
+def _png_chunks(rel: str, data: bytes) -> list[Finding]:
+    """Walk chunks by length field from offset 8; the first IEND must end
+    the file exactly and every chunk type must be a standard one."""
+    off = len(PNG_MAGIC)
+    while off + 8 <= len(data):
+        length = int.from_bytes(data[off:off + 4], "big")
+        ctype = data[off + 4:off + 8]
+        end = off + 12 + length
+        if ctype not in PNG_CHUNKS:
+            return [Finding(rel, "png-chunk", f"unknown chunk type {ctype!r}")]
+        if end > len(data):
+            return [Finding(rel, "png-chunk", f"{ctype.decode()} runs past EOF")]
+        if ctype == b"IEND":
+            if end != len(data):
+                return [Finding(rel, "trailing-data", "bytes after IEND chunk")]
+            return []
+        off = end
+    return [Finding(rel, "png-chunk", "no IEND chunk")]
 
 
 def scan_file(root: Path, rel: str) -> list[Finding]:
@@ -82,20 +98,33 @@ def scan_file(root: Path, rel: str) -> list[Finding]:
     except UnicodeDecodeError:
         is_text = False
 
-    if suffix in IMAGE_EXTENSIONS:
-        if not _image_magic_ok(suffix, data, is_text):
-            findings.append(Finding(rel, "magic-mismatch",
-                                    f"content does not match {suffix} magic"))
-        if suffix == ".png" and data.startswith(PNG_MAGIC):
-            iend = data.rfind(b"IEND")
-            if iend != -1 and len(data) > iend + 8:
-                findings.append(Finding(rel, "trailing-data", "bytes after IEND chunk"))
-        limit = BRANDING_SIZE_LIMIT if branding else SIZE_LIMIT
+    if data.startswith(LFS_POINTER):
+        findings.append(Finding(rel, "lfs-pointer", "git-lfs pointer file"))
+
+    if suffix in UNSUPPORTED_IMAGE_EXTENSIONS:
+        # shortcut: no JPEG/WebP parser yet, so these are rejected outright
+        findings.append(Finding(rel, "unsupported-image",
+                                f"no parser for {suffix} yet"))
+        limit = SIZE_LIMIT
     elif is_text:
-        if BLOB_RUN.search(data):
+        # text checks apply to every UTF-8 file, SVG included
+        if BLOB_RUN.search(re.sub(rb"\s+", b"", data)):
             findings.append(Finding(rel, "encoded-blob",
                                     "run of >=4096 base64/hex characters"))
+        if len(HEX_BYTE.findall(data)) > HEX_BYTE_LIMIT:
+            findings.append(Finding(rel, "encoded-blob",
+                                    f"more than {HEX_BYTE_LIMIT} 0xNN byte tokens"))
+        if suffix == ".png":
+            findings.append(Finding(rel, "magic-mismatch",
+                                    "content does not match .png magic"))
         limit = TEXT_SIZE_LIMIT
+    elif suffix == ".png" and data.startswith(PNG_MAGIC):
+        findings.extend(_png_chunks(rel, data))
+        limit = BRANDING_SIZE_LIMIT if branding else SIZE_LIMIT
+    elif suffix in IMAGE_EXTENSIONS:
+        findings.append(Finding(rel, "magic-mismatch",
+                                f"content does not match {suffix} magic"))
+        limit = BRANDING_SIZE_LIMIT if branding else SIZE_LIMIT
     else:
         if in_assets:
             findings.append(Finding(rel, "unknown-binary",

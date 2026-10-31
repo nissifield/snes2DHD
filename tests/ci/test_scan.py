@@ -93,7 +93,7 @@ class ScanTests(unittest.TestCase):
         self.assertEqual(self.rules(rel), {"too-large"})
 
     def test_text_too_large(self):
-        rel = self.write("long.txt", "lorem ipsum " * 25000)
+        rel = self.write("long.txt", "lorem ipsum! " * 21000)
         self.assertEqual(self.rules(rel), {"too-large"})
 
     def test_png_under_assets_ok(self):
@@ -105,9 +105,8 @@ class ScanTests(unittest.TestCase):
         self.assertIn("trailing-data", self.rules(rel))
 
     def test_image_magic_must_match_extension(self):
-        for name in ("assets/a.png", "assets/a.jpg", "assets/a.webp"):
-            rel = self.write(name, "plain text, not an image\n")
-            self.assertIn("magic-mismatch", self.rules(rel), name)
+        rel = self.write("assets/a.png", "plain text, not an image\n")
+        self.assertIn("magic-mismatch", self.rules(rel))
 
     def test_zeroed_checksum_rom_named_png(self):
         data = bytearray(rom_bytes())
@@ -117,11 +116,10 @@ class ScanTests(unittest.TestCase):
         self.assertNotIn("snes-header", rules)
         self.assertIn("magic-mismatch", rules)
 
-    def test_jpeg_and_webp_magic_ok(self):
-        jpg = self.write("assets/p.jpg", b"\xff\xd8\xff" + b"\x00" * 16)
-        webp = self.write("assets/p.webp", b"RIFF" + b"\x00" * 4 + b"WEBP" + b"\x00" * 8)
-        self.assertEqual(scan.scan_file(self.root, jpg), [])
-        self.assertEqual(scan.scan_file(self.root, webp), [])
+    def test_jpeg_rejected(self):
+        for name in ("assets/p.jpg", "assets/p.jpeg", "assets/p.webp"):
+            rel = self.write(name, b"\xff\xd8\xff" + b"\x00" * 16)
+            self.assertIn("unsupported-image", self.rules(rel), name)
 
     def test_svg_must_be_utf8(self):
         good = self.write("assets/logo.svg", "<svg xmlns='http://www.w3.org/2000/svg'/>\n")
@@ -136,6 +134,47 @@ class ScanTests(unittest.TestCase):
     def test_hex_blob(self):
         rel = self.write("notes.txt", "deadbeef" * 600)
         self.assertIn("encoded-blob", self.rules(rel))
+
+    def test_wrapped_base64_flagged(self):
+        blob = "QUJDRA" * 850  # 5100 chars, but every line is 76 chars
+        wrapped = "\n".join(blob[i:i + 76] for i in range(0, len(blob), 76))
+        rel = self.write("notes.txt", wrapped + "\n")
+        self.assertIn("encoded-blob", self.rules(rel))
+
+    def test_c_byte_array_flagged(self):
+        arr = ", ".join(f"0x{i % 256:02X}" for i in range(2100))
+        rel = self.write("data.h", f"const char x[] = {{{arr}}};\n")
+        self.assertIn("encoded-blob", self.rules(rel))
+
+    def test_svg_with_base64_flagged(self):
+        blob = "QUJDRA" * 850
+        svg = f"<svg xmlns='http://www.w3.org/2000/svg'><!-- {blob} --></svg>\n"
+        rel = self.write("assets/logo.svg", svg)
+        self.assertIn("encoded-blob", self.rules(rel))
+
+    def test_lfs_pointer_rejected(self):
+        rel = self.write("assets/big.png",
+                         b"version https://git-lfs.github.com/spec/v1\n"
+                         b"oid sha256:" + b"a" * 64 + b"\nsize 123\n")
+        self.assertIn("lfs-pointer", self.rules(rel))
+
+    def test_png_fake_iend_after_payload(self):
+        rel = self.write("assets/sprites/hero.png",
+                         PNG + IEND + b"\x00" * 100 + IEND)
+        self.assertIn("trailing-data", self.rules(rel))
+
+    def test_png_private_chunk_rejected(self):
+        payload = b"\x00" * 32
+        priv = len(payload).to_bytes(4, "big") + b"vpAg" + payload + b"\x00" * 4
+        rel = self.write("assets/sprites/hero.png", PNG + priv + IEND)
+        self.assertIn("png-chunk", self.rules(rel))
+
+    def test_real_branding_pngs_pass(self):
+        repo = Path(__file__).resolve().parents[2]
+        for name in ("banner.png", "logo-32.png", "logo-512.png",
+                     "social-preview.png"):
+            rel = f"assets/branding/{name}"
+            self.assertEqual(scan.scan_file(repo, rel), [], rel)
 
     def test_src_assets_binary(self):
         rel = self.write("src/assets/x.bin", b"\xff\xfe\x00\x01")

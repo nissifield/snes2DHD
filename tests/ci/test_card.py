@@ -61,6 +61,12 @@ class CardTests(unittest.TestCase):
         self.assertTrue(card.is_protected(".lfsconfig"))
         self.assertTrue(card.is_protected("docs/CODEOWNERS"))
 
+    def test_nested_gitattributes_protected(self):
+        self.assertTrue(card.is_protected("src/.gitattributes"))
+        self.assertTrue(card.is_protected("docs/deep/.lfsconfig"))
+        self.assertTrue(card.is_protected("a/b/.gitmodules"))
+        self.assertTrue(card.is_protected(".github/CODEOWNERS"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -25,6 +25,12 @@ PROTECTED = (
 )
 
 
+# Basenames protected in any directory: git applies nested .gitattributes /
+# .lfsconfig / .gitmodules, and CODEOWNERS can live in .github/ or docs/.
+PROTECTED_BASENAMES = frozenset({".gitattributes", ".lfsconfig", ".gitmodules",
+                                 "codeowners"})
+
+
 class Card(NamedTuple):
     number: int
     labels: list[str]
@@ -42,7 +48,7 @@ def glob_match(pattern: str, path: str) -> bool:
 
 def is_protected(path: str) -> bool:
     lower = path.lower()
-    if lower.rsplit("/", 1)[-1] == "codeowners":
+    if lower.rsplit("/", 1)[-1] in PROTECTED_BASENAMES:
         return True
     for entry in PROTECTED:
         entry = entry.lower()

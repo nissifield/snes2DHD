@@ -20,24 +20,30 @@ import scan
 
 RIGHTS_BOX = "- [x] I have the right to submit this under the project's licences " \
              "and it contains no ROM data or copied code."
-# GitHub closing keywords; group 1 is an optional owner/repo prefix, group 2 the number.
+# GitHub closing keywords, with an optional colon. The reference may be #N,
+# owner/repo#N, or a full issue URL; prefix/url set means it is not a plain
+# in-repo #N reference.
 CLOSES_RE = re.compile(
-    r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+([\w.-]+/[\w.-]+)?#(\d+)",
+    r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?[ \t]+"
+    r"(?:(?P<prefix>[\w.-]+/[\w.-]+)#"
+    r"|https://github\.com/(?P<url>[\w.-]+/[\w.-]+)/issues/"
+    r"|#)"
+    r"(?P<num>\d+)",
     re.IGNORECASE)
 CARD_LABELS = ("card:ready", "card:claimed")
-CORE_ASSOCIATIONS = ("OWNER", "MEMBER", "COLLABORATOR")
+CORE_ASSOCIATIONS = ("OWNER", "MEMBER")
 
 
 def check_pr_body(body: str) -> list[str]:
     errors = []
     if RIGHTS_BOX not in body:
         errors.append("rights checkbox not ticked (exact text required)")
-    closes = CLOSES_RE.findall(body)
+    closes = list(CLOSES_RE.finditer(body))
     if len(closes) != 1:
         errors.append(f"expected exactly one issue-closing reference, found {len(closes)}")
-    elif closes[0][0]:
+    elif closes[0].group("prefix") or closes[0].group("url"):
         errors.append(f"closing reference must be #N in this repo, "
-                      f"not {closes[0][0]}#{closes[0][1]}")
+                      f"not {closes[0].group(0)}")
     return errors
 
 
@@ -76,8 +82,11 @@ def _git(pr_dir: str, *args: str) -> str:
 
 def changes_from_git(pr_dir: str, base_sha: str,
                      head_sha: str) -> list[tuple[str, str, str | None]]:
-    """(status, path, old_path) per change; R/C carry the old path too."""
-    out = _git(pr_dir, "diff", "-z", "--name-status", "-M", base_sha, head_sha)
+    """(status, path, old_path) per change; R/C carry the old path too.
+    Three-dot diffs against the merge base, so main moving on after the
+    branch point doesn't add its own changes to the list."""
+    out = _git(pr_dir, "diff", "-z", "--name-status", "-M",
+               f"{base_sha}...{head_sha}")
     fields = out.split("\0")
     changes = []
     i = 0
@@ -115,6 +124,11 @@ def check_files(pr_dir: str,
         if not stat.S_ISREG(st.st_mode):
             errors.append(f"not a regular file: {path}")
             continue
+        try:
+            Path(pr_dir, path).read_bytes().decode("utf-8")
+        except UnicodeDecodeError:
+            # binary changes never auto-merge
+            errors.append(f"binary file needs a core member: {path}")
         scannable.append(path)
     return errors, scannable
 
@@ -147,7 +161,7 @@ def main(event_path: str, pr_dir: str,
     body = live.get("body") or ""
     errors += check_pr_body(body)
     if not errors:
-        number = int(CLOSES_RE.search(body).group(2))
+        number = int(CLOSES_RE.search(body).group("num"))
         issue = fetch(f"{repo}/issues/{number}")
         errors += check_card_trust(issue)
         labels = [l["name"] for l in issue.get("labels", [])]
