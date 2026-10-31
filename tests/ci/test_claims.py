@@ -186,7 +186,8 @@ class MainFlowTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertFalse([c for c in request.calls if c[0] == "DELETE"])
         comment = [d for m, u, d in request.calls if u.endswith("/comments")][0]
-        self.assertIn("would not assign", comment["body"])
+        self.assertIn("wouldn't accept the assignment", comment["body"])
+        self.assertNotIn("comment on the issue", comment["body"])
 
     def test_main_refetches_issue_not_event_snapshot(self):
         # Event snapshot says ready; the live issue is already claimed by bob.

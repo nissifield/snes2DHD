@@ -193,8 +193,10 @@ def main(event_path: str, request: Request | None = None) -> int:
                 # GitHub silently refuses some assignees; a claimed label with
                 # nobody assigned would never expire, so don't swap labels.
                 action = Action("reply",
-                                "GitHub would not assign you — comment on the "
-                                "issue first / check your account")
+                                "GitHub wouldn't accept the assignment (it only "
+                                "allows assigning people who can be assigned on "
+                                "this repo). A core member will assign you "
+                                "manually.")
             else:
                 _swap_labels(request, repo, number, READY_LABEL, CLAIM_LABEL)
         elif action.kind == "unassign":
