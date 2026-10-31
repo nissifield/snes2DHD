@@ -133,8 +133,11 @@ def _review_pr(gh: Gh, agent: Agent, agent_cmd: list[str], role_md: str,
         print(f"PR #{number}: DRY RUN, would post {verdict} at {head[:7]}:")
         print(out)
         return
-    flag = "--approve" if verdict == "APPROVE" else "--request-changes"
-    gh("pr", "review", str(number), flag, "--body", out)
+    # Pin the review to the reviewed SHA; `gh pr review` would attach it to
+    # whatever the head is at post time, so a push in between would get approved.
+    event = "APPROVE" if verdict == "APPROVE" else "REQUEST_CHANGES"
+    gh("api", "-X", "POST", f"repos/{repo}/pulls/{number}/reviews",
+       "-f", f"commit_id={head}", "-f", f"event={event}", "-f", f"body={out}")
     if verdict == "APPROVE":
         gh("pr", "merge", str(number), "--auto", "--squash")
 
@@ -167,8 +170,14 @@ def run(agent_cmd: list[str], dry_run: bool = True, gh: Gh | None = None,
     rc = 0
     if cards:
         issues = json.loads(gh("issue", "list", "--state", "open", "--label",
-                               "card:draft", "--json", "number,body"))
+                               "card:draft", "--json", "number,body,author"))
+        # Issue forms add card:draft for anyone; only core-authored drafts count.
+        # shortcut: core = the member running this; add a core list when there are more members
+        core = {gh("api", "user", "--jq", ".login").strip()}
         for issue in issues:
+            if issue.get("author", {}).get("login") not in core:
+                print(f"issue #{issue['number']}: not authored by a core member, skipping")
+                continue
             try:
                 _review_card(gh, agent, agent_cmd, role_md, issue, dry_run)
             except Exception as e:

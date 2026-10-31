@@ -154,8 +154,12 @@ class RunTests(unittest.TestCase):
 
     def test_card_ok_swaps_label_live_only(self):
         routes = [
+            (("api", "user"), "alice\n"),
             (("issue", "list"),
-             json.dumps([{"number": 3, "body": "card draft"}])),
+             json.dumps([{"number": 3, "body": "card draft",
+                          "author": {"login": "alice"}},
+                         {"number": 4, "body": "outsider draft",
+                          "author": {"login": "mallory"}}])),
             (("issue", "edit", "3"), ""),
         ]
         out = "- none\nVERDICT: CARD_OK\n"
@@ -173,6 +177,18 @@ class RunTests(unittest.TestCase):
             [c for c in gh.calls if c[:2] == ("issue", "edit")],
             [("issue", "edit", "3", "--remove-label", "card:draft",
               "--add-label", "card:ready")])
+
+    def test_live_review_pinned_to_reviewed_sha(self):
+        gh = make_gh(green_pr_routes() + [(("api", "-X", "POST"), "{}"),
+                                          (("pr", "merge"), "")])
+        rc = review_queue.run(["echo"], dry_run=False, gh=gh,
+                              agent=make_agent("- none\nVERDICT: APPROVE\n"))
+        self.assertEqual(rc, 0)
+        posts = [c for c in gh.calls if c[:3] == ("api", "-X", "POST")]
+        self.assertEqual(len(posts), 1)
+        self.assertIn(f"commit_id={HEAD}", posts[0])
+        self.assertIn("event=APPROVE", posts[0])
+        self.assertFalse([c for c in gh.calls if c[:2] == ("pr", "review")])
 
 
 if __name__ == "__main__":
