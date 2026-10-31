@@ -9,12 +9,21 @@ network or a model.
 Each PR is reviewed at a pinned commit: the head read from the API is fetched
 into refs/review/<n> and re-checked, and every file/diff/scan decision uses
 that local commit — never a live `gh pr diff` snapshot.
+
+--live acts as the snes2DHD Chores GitHub App: every gh call gets an
+installation token in GH_TOKEN, and if no token can be minted it stops
+rather than fall back to the personal login.
 """
+import base64
 import json
+import os
 import re
 import subprocess
 import sys
 import tempfile
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Callable, Literal
 
@@ -33,6 +42,22 @@ VERDICTS = {
     "pr": ("APPROVE", "REQUEST_CHANGES"),
     "card": ("CARD_OK", "CARD_FIX"),
 }
+
+APP_ID = 5551629
+INSTALLATION_ID = 177112824
+APP_LOGIN = "snes2dhd-chores[bot]"
+OWNER = "nissifield"
+# owner-managed, outside the repo; SNES2DHD_APP_KEY overrides it for tests only
+APP_KEY = Path.home() / ".config" / "snes2dhd" / "chores-app.pem"
+TOKEN_MAX_AGE = 50 * 60  # installation tokens last 60 minutes
+# contents: write because auto-merge merges as the app that enabled it
+TOKEN_REQUEST = {"repositories": ["snes2DHD"],
+                 "permissions": {"contents": "write", "pull_requests": "write",
+                                 "issues": "write", "metadata": "read"}}
+
+
+class AppAuthError(Exception):
+    """Fixed message only: never a key, JWT, token or response body."""
 
 
 def parse_verdict(text: str, mode: Literal["pr", "card"] = "pr") -> str | None:
@@ -68,6 +93,69 @@ def _git(*args: str, root: Path = ROOT) -> str:
     return subprocess.run(["git", "-C", str(root), *args], check=True,
                           capture_output=True).stdout.decode("utf-8",
                                                              "surrogateescape")
+
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def app_jwt(key: str, now: float) -> str:
+    """RS256 JWT for the app. openssl reads the key file, so the key bytes
+    never enter Python."""
+    claims = {"iat": int(now) - 60, "exp": int(now) + 540, "iss": APP_ID}
+    signing = ".".join(_b64url(json.dumps(p, separators=(",", ":")).encode())
+                       for p in ({"alg": "RS256", "typ": "JWT"}, claims))
+    if not os.access(key, os.R_OK):
+        raise AppAuthError("app key missing or unreadable")
+    try:
+        sig = subprocess.run(["openssl", "dgst", "-sha256", "-sign", key],
+                             input=signing.encode(), capture_output=True)
+    except OSError:
+        raise AppAuthError("openssl could not sign the app JWT") from None
+    if sig.returncode or not sig.stdout:
+        raise AppAuthError("openssl could not sign the app JWT")
+    return f"{signing}.{_b64url(sig.stdout)}"
+
+
+def mint_token(key: str, now: float, opener=urllib.request.urlopen) -> str:
+    req = urllib.request.Request(
+        "https://api.github.com/app/installations/"
+        f"{INSTALLATION_ID}/access_tokens",
+        data=json.dumps(TOKEN_REQUEST).encode(), method="POST",
+        headers={"Authorization": f"Bearer {app_jwt(key, now)}",
+                 "Accept": "application/vnd.github+json",
+                 "Content-Type": "application/json",
+                 "X-GitHub-Api-Version": "2022-11-28"})
+    # `from None`: a chained exception could carry the request or the body
+    try:
+        with opener(req, timeout=30) as resp:
+            token = json.loads(resp.read()).get("token")
+    except urllib.error.HTTPError as e:
+        raise AppAuthError(f"app token request failed: HTTP {e.code}") from None
+    except Exception:
+        raise AppAuthError("app token request failed") from None
+    if not isinstance(token, str) or not token:
+        raise AppAuthError("app token response had no token")
+    return token
+
+
+def app_gh(opener=urllib.request.urlopen, clock=time.time,
+           runner=subprocess.run) -> Gh:
+    """`gh` as the Chores app, re-minting the token before it expires."""
+    key = os.environ.get("SNES2DHD_APP_KEY") or str(APP_KEY)
+    state = {}
+
+    def gh(*args: str) -> str:
+        now = clock()
+        if not state or now - state["at"] > TOKEN_MAX_AGE:
+            state.update(token=mint_token(key, now, opener), at=now)
+        # no other credential may reach gh, even one it would rank lower
+        env = {k: v for k, v in os.environ.items() if k != "GITHUB_TOKEN"}
+        env["GH_TOKEN"] = state["token"]
+        return runner(["gh", *args], check=True, capture_output=True,
+                      text=True, env=env).stdout
+
+    return gh
 
 
 def _agent(cmd: list[str], prompt: str) -> str:
@@ -249,26 +337,32 @@ def run(agent_cmd: list[str], dry_run: bool = True, gh: Gh | None = None,
                                "card:draft", "--json", "number,body,author"))
         # Issue forms add card:draft for anyone; only core-authored drafts count.
         # shortcut: core = the member running this; add a core list when there are more members
-        core = {gh("api", "user", "--jq", ".login").strip()}
+        # The app token can't read /user; its key is owner-managed, so live = owner.
+        core = {gh("api", "user", "--jq", ".login").strip()} if dry_run \
+            else {OWNER}
         for issue in issues:
             if issue.get("author", {}).get("login") not in core:
                 print(f"issue #{issue['number']}: not authored by a core member, skipping")
                 continue
             try:
                 _review_card(gh, agent, agent_cmd, role_md, issue, dry_run)
+            except AppAuthError:
+                raise
             except Exception as e:
                 print(f"issue #{issue['number']}: error: {e}")
                 rc = 1
         return rc
     repo = gh("repo", "view", "--json", "nameWithOwner", "--jq",
               ".nameWithOwner").strip()
-    me = gh("api", "user", "--jq", ".login").strip()
+    me = gh("api", "user", "--jq", ".login").strip() if dry_run else APP_LOGIN
     prs = json.loads(gh("pr", "list", "--state", "open", "--limit", "1000",
                          "--json", "number"))
     for pr in prs:
         try:
             _review_pr(gh, git, agent, agent_cmd, role_md, repo, me,
                        pr["number"], dry_run)
+        except AppAuthError:
+            raise
         except Exception as e:
             print(f"PR #{pr['number']}: error: {e}")
             rc = 1
@@ -285,15 +379,22 @@ def main(argv: list[str]) -> int:
         print("usage: review_queue.py [--live] [--cards] -- <agent command...>",
               file=sys.stderr)
         return 2
-    # origin/main picks the diff base, so origin must be the real repo
-    repo = _gh("repo", "view", "--json", "nameWithOwner", "--jq",
-               ".nameWithOwner").strip()
-    url = _git("remote", "get-url", "origin").strip().removesuffix(".git")
-    if not re.search(r"github\.com[:/]" + re.escape(repo) + "$", url):
-        print(f"origin {url} is not github.com/{repo}", file=sys.stderr)
-        return 2
-    return run(agent_cmd, dry_run="--live" not in flags,
-               cards="--cards" in flags)
+    live = "--live" in flags
+    gh = app_gh() if live else _gh
+    try:
+        # origin/main picks the diff base, so origin must be the real repo
+        repo = gh("repo", "view", "--json", "nameWithOwner", "--jq",
+                  ".nameWithOwner").strip()
+        url = _git("remote", "get-url", "origin").strip().removesuffix(".git")
+        if not re.search(r"github\.com[:/]" + re.escape(repo) + "$", url):
+            print(f"origin {url} is not github.com/{repo}", file=sys.stderr)
+            return 2
+        return run(agent_cmd, dry_run=not live, gh=gh,
+                   cards="--cards" in flags)
+    except AppAuthError as e:
+        print(f"live mode stopped, no personal-login fallback: {e}",
+              file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

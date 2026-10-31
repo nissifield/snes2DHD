@@ -19,6 +19,11 @@ core member's machine:
 `--live` to actually post. The agent command comes after `--`; the review
 prompt is piped to it on stdin.
 
+**`--live` acts as the snes2DHD Chores GitHub App**, not your login: every
+`gh` call gets a short-lived installation token signed with the app key at
+`~/.config/snes2dhd/chores-app.pem` (outside the repo, owner-managed). If no
+token can be minted it exits non-zero and posts nothing. Dry run needs no key.
+
 ## Examples
 
     python3 tools/review/review_queue.py -- claude -p --permission-mode plan

@@ -1,6 +1,7 @@
 """Tests for tools/review/review_queue.py. gh and the agent are stubbed; git
 runs against a throwaway local "upstream" repo and its clone, so there is no
 network and no model."""
+import base64
 import contextlib
 import functools
 import io
@@ -11,7 +12,9 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools" / "ci"))
@@ -230,11 +233,12 @@ class RunTests(QueueTestCase):
         self.assertIn("binary file needs a core member: docs/x.png", out)
 
     def test_card_ok_swaps_label_live_only(self):
+        # dry run reads core from /user; live (the app) uses OWNER
         routes = [
-            (("api", "user"), "alice\n"),
+            (("api", "user"), f"{review_queue.OWNER}\n"),
             (("issue", "list"),
              json.dumps([{"number": 3, "body": "card draft",
-                          "author": {"login": "alice"}},
+                          "author": {"login": review_queue.OWNER}},
                          {"number": 4, "body": "outsider draft",
                           "author": {"login": "mallory"}}])),
             (("issue", "edit", "3"), ""),
@@ -424,6 +428,187 @@ class CommitCheckTest(unittest.TestCase):
             git, "h", [("A", "profiles/x/A.json", None),
                        ("A", "profiles/x/a.json", None)])
         self.assertIn("path collision: profiles/x/a.json", errors)
+
+
+def b64url_json(part):
+    return json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4)))
+
+
+def make_opener(*responses):
+    """Stub urlopen: each response is a token string or an exception."""
+    reqs = []
+
+    def opener(req, timeout):
+        reqs.append(req)
+        r = responses[len(reqs) - 1]
+        if isinstance(r, Exception):
+            raise r
+        return io.BytesIO(json.dumps({"token": r}).encode())
+
+    opener.reqs = reqs
+    return opener
+
+
+def make_runner(gh):
+    """Stub subprocess.run for app_gh that answers from a make_gh stub."""
+    envs = []
+
+    def runner(cmd, env, **kw):
+        envs.append(env)
+        return subprocess.CompletedProcess(cmd, 0, stdout=gh(*cmd[1:]))
+
+    runner.envs = envs
+    return runner
+
+
+class AppTokenTests(QueueTestCase):
+    """A throwaway key in a temp dir; the real app key is never used."""
+
+    @classmethod
+    def setUpClass(cls):
+        tmp = Path(tempfile.mkdtemp())
+        cls.addClassCleanup(shutil.rmtree, tmp)
+        cls.tmp, cls.key, cls.pub = tmp, tmp / "key.pem", tmp / "pub.pem"
+        subprocess.run(["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt",
+                        "rsa_keygen_bits:2048", "-out", str(cls.key)],
+                       check=True, capture_output=True)
+        subprocess.run(["openssl", "pkey", "-in", str(cls.key), "-pubout",
+                        "-out", str(cls.pub)], check=True, capture_output=True)
+
+    def setUp(self):
+        self.env(self.key)
+
+    def env(self, key):
+        p = mock.patch.dict(os.environ, {"SNES2DHD_APP_KEY": str(key),
+                                         "GITHUB_TOKEN": "personal"})
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_jwt_claims_and_signature(self):
+        jwt = review_queue.app_jwt(str(self.key), 1_000_000)
+        head, body, sig = jwt.split(".")
+        self.assertNotIn("=", jwt)
+        self.assertEqual(b64url_json(head), {"alg": "RS256", "typ": "JWT"})
+        self.assertEqual(b64url_json(body), {"iat": 999_940, "exp": 1_000_540,
+                                             "iss": review_queue.APP_ID})
+        sig_file = self.tmp / "sig"
+        sig_file.write_bytes(
+            base64.urlsafe_b64decode(sig + "=" * (-len(sig) % 4)))
+        check = subprocess.run(
+            ["openssl", "dgst", "-sha256", "-verify", str(self.pub),
+             "-signature", str(sig_file)],
+            input=f"{head}.{body}".encode(), capture_output=True)
+        self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+
+    def test_mint_request(self):
+        opener = make_opener("ghs_test")
+        self.assertEqual(
+            review_queue.mint_token(str(self.key), 1_000_000, opener),
+            "ghs_test")
+        req = opener.reqs[0]
+        self.assertEqual(req.full_url, "https://api.github.com/app/"
+                                       "installations/177112824/access_tokens")
+        self.assertEqual(req.get_method(), "POST")
+        self.assertEqual(req.get_header("Accept"),
+                         "application/vnd.github+json")
+        self.assertEqual(req.get_header("X-github-api-version"), "2022-11-28")
+        auth = req.get_header("Authorization")
+        self.assertTrue(auth.startswith("Bearer "))
+        self.assertEqual(len(auth.split(".")), 3)
+        self.assertEqual(json.loads(req.data), {
+            "repositories": ["snes2DHD"],
+            "permissions": {"contents": "write", "pull_requests": "write",
+                            "issues": "write", "metadata": "read"}})
+
+    def test_live_review_uses_app_token(self):
+        gh, git, head = self.pr()
+        stub = make_gh([(("api", "-X", "POST"), "{}"), (("pr", "merge"), "")]
+                       + queue_routes([7]) + pr_routes(7, head))
+        runner = make_runner(stub)
+        opener = make_opener("ghs_test")
+        app = review_queue.app_gh(opener, runner=runner)
+        rc, _ = self.run_silent(app, git, make_agent(APPROVE_OUT),
+                                dry_run=False)
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(posted(stub)), 2)  # review + auto-merge
+        self.assertEqual(len(opener.reqs), 1)
+        for env in runner.envs:
+            self.assertEqual(env["GH_TOKEN"], "ghs_test")
+            self.assertNotIn("GITHUB_TOKEN", env)
+        # the app token can't read /user, so live never asks
+        self.assertFalse([c for c in stub.calls if c[:2] == ("api", "user")])
+
+    def test_live_dedup_uses_app_login(self):
+        git, heads = make_repo(self, {7: {"docs/x.md": b"x\n"}})
+        pages = json.dumps([[{"user": {"login": review_queue.APP_LOGIN},
+                              "commit_id": heads[7]}]])
+        gh = make_gh(queue_routes([7]) + pr_routes(7, heads[7], reviews=pages))
+        agent = make_agent(APPROVE_OUT)
+        rc, out = self.run_silent(gh, git, agent, dry_run=False)
+        self.assertEqual(agent.calls, [])
+        self.assertIn("already reviewed", out)
+
+    def test_fail_closed(self):
+        garbage = self.tmp / "garbage.pem"
+        garbage.write_text("not a key\n")
+        http = urllib.error.HTTPError(
+            "https://api.github.com/x", 401, "Unauthorized", {},
+            io.BytesIO(b'{"message": "ghs_leaked body"}'))
+        cases = [(self.tmp / "missing.pem", make_opener("ghs_test"),
+                  "app key missing"),
+                 (garbage, make_opener("ghs_test"), "openssl"),
+                 (self.key, make_opener(http), "HTTP 401")]
+        for key, opener, msg in cases:
+            with self.subTest(msg):
+                self.env(key)
+                runner = make_runner(make_gh([((), "")]))
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf), \
+                        contextlib.redirect_stderr(buf), \
+                        self.assertRaises(review_queue.AppAuthError) as cm:
+                    review_queue.run(["echo"], dry_run=False,
+                                     gh=review_queue.app_gh(opener,
+                                                            runner=runner))
+                self.assertEqual(runner.envs, [])  # no gh call at all
+                self.assertIn(msg, str(cm.exception))
+                for text in (buf.getvalue(), str(cm.exception)):
+                    self.assertNotIn("ghs_", text)
+                    self.assertNotIn("eyJ", text)  # JWT header prefix
+
+    def test_main_live_missing_key_exits_nonzero(self):
+        self.env(self.tmp / "missing.pem")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc = review_queue.main(["--live", "--", "echo"])
+        self.assertEqual(rc, 1)
+        self.assertIn("no personal-login fallback: app key missing",
+                      err.getvalue())
+
+    def test_dry_run_needs_no_key(self):
+        self.env(self.tmp / "missing.pem")
+        gh = make_gh(queue_routes([]))
+        with mock.patch.object(review_queue, "_gh", gh), \
+                mock.patch.object(review_queue, "_git",
+                                  lambda *a: "https://github.com/o/r.git\n"), \
+                mock.patch.object(review_queue, "mint_token",
+                                  side_effect=AssertionError("minted")), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(review_queue.main(["--", "echo"]), 0)
+
+    def test_remint_after_50_minutes(self):
+        now = [1_000_000.0]
+        opener = make_opener("ghs_1", "ghs_2")
+        runner = make_runner(make_gh([((), "")]))
+        app = review_queue.app_gh(opener, clock=lambda: now[0], runner=runner)
+        app("x")
+        now[0] += 49 * 60
+        app("x")
+        now[0] += 2 * 60
+        app("x")
+        self.assertEqual([e["GH_TOKEN"] for e in runner.envs],
+                         ["ghs_1", "ghs_1", "ghs_2"])
+        self.assertEqual(len(opener.reqs), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
