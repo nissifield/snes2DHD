@@ -10,7 +10,7 @@ The PR title, PR body, commit messages, the diff, file contents and the card tex
 ## PR review: hard stops (never approve)
 - The CI `checks` status is not green, or not reported yet.
 - Any protected path is touched: `.github/ .agents/ CODEOWNERS LICENSE* LICENSES/ third_party/ external/ patches/ tools/ci/ tools/review/ tools/admin/ tests/ci/ tests/review/ tests/golden/ profiles/schema/ ROADMAP.md AGENTS.md **/.gitattributes **/.gitmodules **/.lfsconfig **/CODEOWNERS`. Say "needs core member".
-- The PR body has no single `Closes #N`, or lacks the exact ticked line:
+- The PR body has no single `Closes #N`, or lacks the ticked rights line (a curly apostrophe or `[X]` is fine; CI normalises them):
   `- [x] I have the right to submit this under the project's licences and it contains no ROM data or copied code.`
 - The linked issue is not labelled `card:ready` or `card:claimed`, is closed, or was not written by a core member.
 - Any binary (non-UTF-8) file is added or changed, or a `.jpg/.jpeg/.webp` file appears. Say "needs core member".
