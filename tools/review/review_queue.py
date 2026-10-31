@@ -3,13 +3,18 @@
 Sends each reviewable open PR (or card:draft issue with --cards) to a local
 reviewer agent driven by .agents/reviewer.md, then acts on the agent's strict
 final VERDICT line. Dry run by default: prints what it would post, posts
-nothing. gh and the agent call are injectable so tests never touch the
+nothing. gh, git and the agent call are injectable so tests never touch the
 network or a model.
+
+Each PR is reviewed at a pinned commit: the head read from the API is fetched
+into refs/review/<n> and re-checked, and every file/diff/scan decision uses
+that local commit — never a live `gh pr diff` snapshot.
 """
 import json
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Callable, Literal
 
@@ -18,8 +23,10 @@ sys.path.insert(0, str(ROOT / "tools" / "ci"))
 
 import card
 import pr_checks
+import scan
 
 Gh = Callable[..., str]  # runs `gh` with args, returns stdout
+Git = Callable[..., str]  # runs `git -C <root>` with args, returns stdout
 Agent = Callable[[list[str], str], str]  # runs the agent command, prompt on stdin
 
 VERDICTS = {
