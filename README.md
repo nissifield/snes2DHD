@@ -54,7 +54,7 @@ Real-game FrameState dumps stay local. Repository test fixtures will use synthet
 | M4 — Voxel mode | Voxel geometry mixed with flat elements |
 | M5 — Profile inspector | In-app profile editing |
 
-See [ROADMAP.md](./ROADMAP.md) for milestone outcomes.
+See [ROADMAP.md](./ROADMAP.md) for milestone outcomes and [docs/design.md](./docs/design.md) for the full design.
 
 ## Licences and credits
 
