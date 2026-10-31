@@ -72,7 +72,7 @@ def _checks_green(rollup: list[dict]) -> bool:
 
 
 # GitHub file status -> git-style letter for pr_checks.check_paths.
-STATUS_MAP = {"added": "A", "removed": "D", "modified": "M", "changed": "M",
+STATUS_MAP = {"added": "A", "removed": "D", "modified": "M",
               "renamed": "R", "copied": "C"}
 
 
@@ -99,13 +99,20 @@ def _review_pr(gh: Gh, agent: Agent, agent_cmd: list[str], role_md: str,
     # `gh pr view --json files` caps at 100 files and drops old paths, so the
     # file list comes from the paginated API and must match changed_files.
     pull = json.loads(gh("api", f"repos/{repo}/pulls/{number}"))
-    files = json.loads(gh("api", "--paginate",
+    # --slurp wraps every page in one outer array; plain --paginate would
+    # concatenate pages into invalid JSON.
+    pages = json.loads(gh("api", "--paginate", "--slurp",
                           f"repos/{repo}/pulls/{number}/files"))
+    files = [f for page in pages for f in page]
     if len(files) != pull.get("changed_files", -1):
         print(f"PR #{number}: file count {len(files)} != changed_files "
               f"{pull.get('changed_files')}, skipping")
         return
-    changes = [(STATUS_MAP.get(f["status"], "M"), f["filename"],
+    unknown = [f["filename"] for f in files if f["status"] not in STATUS_MAP]
+    if unknown:
+        print(f"PR #{number}: unsupported file status for {unknown[0]}, skipping")
+        return
+    changes = [(STATUS_MAP[f["status"]], f["filename"],
                 f.get("previous_filename")) for f in files]
     body = pull.get("body") or ""
     errors = pr_checks.check_pr_body(body)

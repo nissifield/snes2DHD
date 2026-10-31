@@ -55,8 +55,10 @@ def pr_view(head=HEAD, rollup=None):
     })
 
 
-def files_json(paths):
-    return json.dumps([{"filename": p, "status": "modified"} for p in paths])
+def files_json(paths, status="modified"):
+    """`gh api --paginate --slurp` shape: one outer array of 100-item pages."""
+    items = [{"filename": p, "status": status} for p in paths]
+    return json.dumps([items[i:i + 100] for i in range(0, len(items), 100)])
 
 
 def issue_json(assoc="OWNER"):
@@ -76,7 +78,7 @@ def green_pr_routes(number=7, files=("docs/x.md",), head=HEAD,
         (("api", f"repos/o/r/pulls/{number}"),
          json.dumps({"changed_files": changed_files if changed_files is not None
                      else len(files), "body": BODY})),
-        (("api", "--paginate", f"repos/o/r/pulls/{number}/files"),
+        (("api", "--paginate", "--slurp", f"repos/o/r/pulls/{number}/files"),
          files_json(files)),
         (("api", "repos/o/r/issues/12"), issue_json(assoc)),
         (("api", f"repos/o/r/pulls/{number}/reviews"), "[]"),
@@ -158,13 +160,13 @@ class RunTests(unittest.TestCase):
              pr_view()),
             (("api", "repos/o/r/pulls/7"),
              json.dumps({"changed_files": 1, "body": BODY})),
-            (("api", "--paginate", "repos/o/r/pulls/7/files"),
+            (("api", "--paginate", "--slurp", "repos/o/r/pulls/7/files"),
              files_json(("tools/ci/scan.py",))),
             (("pr", "view", "8", "--json", "headRefOid,statusCheckRollup"),
              pr_view()),
             (("api", "repos/o/r/pulls/8"),
              json.dumps({"changed_files": 1, "body": BODY})),
-            (("api", "--paginate", "repos/o/r/pulls/8/files"),
+            (("api", "--paginate", "--slurp", "repos/o/r/pulls/8/files"),
              files_json(("docs/x.png",))),
             (("api", "repos/o/r/issues/12"), issue_json()),
             (("pr", "diff", "8"),
@@ -236,6 +238,15 @@ class DeterministicCheckTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(agent.calls, [])
         self.assertIn("protected: tools/ci/scan.py", out)
+
+    def test_unknown_file_status_skips(self):
+        routes = green_pr_routes()
+        routes = [(k, files_json(("docs/x.md",), status="changed"))
+                  if k[:2] == ("api", "--paginate") else (k, v) for k, v in routes]
+        agent = make_agent(APPROVE_OUT)
+        rc, out = self.run_silent(make_gh(routes), agent)
+        self.assertEqual(agent.calls, [])
+        self.assertIn("unsupported file status", out)
 
     def test_changed_files_mismatch_skips(self):
         gh = make_gh(green_pr_routes(changed_files=5))  # only 1 file listed
