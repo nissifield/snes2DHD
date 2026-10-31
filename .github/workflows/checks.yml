@@ -4,6 +4,7 @@ name: checks
 on:
   pull_request_target:
     types: [opened, synchronize, reopened, edited]
+    branches: [main]
 
 permissions:
   contents: read
@@ -38,7 +39,7 @@ jobs:
       - name: Run PR checks
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: python3 _base/tools/ci/pr_checks.py pr
+        run: python3 -I _base/tools/ci/pr_checks.py pr
 
       - name: Run CI unit tests
-        run: python3 -m unittest discover -s _base/tests/ci -t _base
+        run: python3 -I -m unittest discover -s _base/tests/ci -t _base

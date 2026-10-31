@@ -3,13 +3,18 @@
 Sends each reviewable open PR (or card:draft issue with --cards) to a local
 reviewer agent driven by .agents/reviewer.md, then acts on the agent's strict
 final VERDICT line. Dry run by default: prints what it would post, posts
-nothing. gh and the agent call are injectable so tests never touch the
+nothing. gh, git and the agent call are injectable so tests never touch the
 network or a model.
+
+Each PR is reviewed at a pinned commit: the head read from the API is fetched
+into refs/review/<n> and re-checked, and every file/diff/scan decision uses
+that local commit — never a live `gh pr diff` snapshot.
 """
 import json
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Callable, Literal
 
@@ -18,8 +23,10 @@ sys.path.insert(0, str(ROOT / "tools" / "ci"))
 
 import card
 import pr_checks
+import scan
 
 Gh = Callable[..., str]  # runs `gh` with args, returns stdout
+Git = Callable[..., str]  # runs `git -C <root>` with args, returns stdout
 Agent = Callable[[list[str], str], str]  # runs the agent command, prompt on stdin
 
 VERDICTS = {
@@ -56,6 +63,13 @@ def _gh(*args: str) -> str:
                           capture_output=True, text=True).stdout
 
 
+def _git(*args: str, root: Path = ROOT) -> str:
+    # surrogateescape round-trips blob bytes exactly; text=True would rewrite \r\n
+    return subprocess.run(["git", "-C", str(root), *args], check=True,
+                          capture_output=True).stdout.decode("utf-8",
+                                                             "surrogateescape")
+
+
 def _agent(cmd: list[str], prompt: str) -> str:
     # not check=True: a non-zero agent exit must not kill the queue
     return subprocess.run(cmd, input=prompt, capture_output=True, text=True).stdout
@@ -71,49 +85,84 @@ def _checks_green(rollup: list[dict]) -> bool:
                for e in checks)
 
 
-# GitHub file status -> git-style letter for pr_checks.check_paths.
-STATUS_MAP = {"added": "A", "removed": "D", "modified": "M",
-              "renamed": "R", "copied": "C"}
+def _check_commit(git: Git, head: str,
+                  changes: list[tuple[str, str, str | None]]) -> list[str]:
+    """pr_checks.check_files and scan.scan on head's blobs, written to a temp
+    dir with `git show` (the PR is never checked out or run)."""
+    modes = {}
+    for entry in git("ls-tree", "-r", "-z", head).split("\0"):
+        if entry:
+            meta, path = entry.split("\t", 1)
+            modes[path] = meta.split(" ", 1)[0]
+    errors = []
+    seen = set()
+    with tempfile.TemporaryDirectory() as tmp:
+        for status, path, _ in changes:
+            if status == "D":
+                continue
+            # crafted trees can hold ".." entries, which the allowlist globs match
+            if Path(path).is_absolute() or ".." in Path(path).parts:
+                errors.append(f"unsafe path: {path}")
+            # `git show` prints a symlink's target or fails on a gitlink, so
+            # the mode is checked here rather than by check_files' lstat
+            elif modes.get(path) not in ("100644", "100755"):
+                errors.append(f"not a regular file: {path}")
+            # on a case-insensitive disk A.json and a.json share one temp file,
+            # so one blob would be scanned in place of the other
+            elif path.casefold() in seen:
+                errors.append(f"path collision: {path}")
+            else:
+                seen.add(path.casefold())
+                out = Path(tmp, path)
+                out.parent.mkdir(parents=True, exist_ok=True)
+                out.write_bytes(git("show", f"{head}:{path}")
+                                .encode("utf-8", "surrogateescape"))
+        if errors:
+            return errors
+        errors, scannable = pr_checks.check_files(tmp, changes)
+        for finding in scan.scan(Path(tmp), scannable):
+            errors.append(f"{finding.path}: {finding.rule}: {finding.detail}")
+    return errors
 
 
-def _binary_paths(diff: str) -> list[str]:
-    # shortcut: binary detection relies on git's "Binary files a/x and b/y
-    # differ" marker lines; upgrade to per-blob UTF-8 checks if gh ever stops
-    # printing them
-    paths = []
-    for line in diff.splitlines():
-        if line.startswith("Binary files "):
-            paths.append(line.rsplit(" b/", 1)[-1].rsplit(" differ", 1)[0])
-    return paths
-
-
-def _review_pr(gh: Gh, agent: Agent, agent_cmd: list[str], role_md: str,
-               repo: str, me: str, number: int, dry_run: bool) -> None:
+def _review_pr(gh: Gh, git: Git, agent: Agent, agent_cmd: list[str],
+               role_md: str, repo: str, me: str, number: int,
+               dry_run: bool) -> None:
     data = json.loads(gh("pr", "view", str(number), "--json",
                          "headRefOid,statusCheckRollup"))
     head = data["headRefOid"]
     if not _checks_green(data.get("statusCheckRollup", [])):
         print(f"PR #{number}: checks not green, skipping")
         return
-    # CI statuses can be faked, so the deterministic checks run here too.
-    # `gh pr view --json files` caps at 100 files and drops old paths, so the
-    # file list comes from the paginated API and must match changed_files.
     pull = json.loads(gh("api", f"repos/{repo}/pulls/{number}"))
-    # --slurp wraps every page in one outer array; plain --paginate would
-    # concatenate pages into invalid JSON.
-    pages = json.loads(gh("api", "--paginate", "--slurp",
-                          f"repos/{repo}/pulls/{number}/files"))
-    files = [f for page in pages for f in page]
-    if len(files) != pull.get("changed_files", -1):
-        print(f"PR #{number}: file count {len(files)} != changed_files "
+    base_ref = pull.get("base", {}).get("ref")
+    if base_ref != "main":
+        print(f"PR #{number}: targets {base_ref}, not main, skipping")
+        return
+    # The head can be swapped between API calls, so every check and the diff
+    # use this pinned local commit. CI statuses can be faked, so the
+    # deterministic checks run here too.
+    git("fetch", "-q", "--no-tags", "origin",
+        f"+refs/pull/{number}/head:refs/review/{number}")
+    git("fetch", "-q", "--no-tags", "origin", "main")
+    fetched = git("rev-parse", f"refs/review/{number}").strip()
+    if fetched != head:
+        print(f"PR #{number}: fetched head {fetched[:7]} != {head[:7]}, "
+              "skipping")
+        return
+    base = git("merge-base", "origin/main", head).strip()
+    try:
+        # changes_from_git runs its own git, so point it at the repo `git` drives
+        changes = pr_checks.changes_from_git(
+            git("rev-parse", "--show-toplevel").strip(), base, head)
+    except ValueError as e:
+        print(f"PR #{number}: {e}, skipping")
+        return
+    # cross-check: GitHub must see the same change set
+    if len(changes) != pull.get("changed_files", -1):
+        print(f"PR #{number}: file count {len(changes)} != changed_files "
               f"{pull.get('changed_files')}, skipping")
         return
-    unknown = [f["filename"] for f in files if f["status"] not in STATUS_MAP]
-    if unknown:
-        print(f"PR #{number}: unsupported file status for {unknown[0]}, skipping")
-        return
-    changes = [(STATUS_MAP[f["status"]], f["filename"],
-                f.get("previous_filename")) for f in files]
     body = pull.get("body") or ""
     errors = pr_checks.check_pr_body(body)
     if not errors:
@@ -124,22 +173,22 @@ def _review_pr(gh: Gh, agent: Agent, agent_cmd: list[str], role_md: str,
         errors += pr_checks.check_labels(labels)
         c = card.parse_card(num, labels, issue.get("body") or "")
         errors += pr_checks.check_paths(changes, c)
+        errors += _check_commit(git, head, changes)
     if errors:
         print(f"PR #{number}: deterministic checks failed, skipping")
         for e in errors:
             print(f"  {e}")
         return
-    diff = gh("pr", "diff", str(number))
-    binaries = _binary_paths(diff)
-    if binaries:
-        print(f"PR #{number}: binary file {binaries[0]} needs a core member, "
-              "skipping")
-        return
-    reviews = json.loads(gh("api", f"repos/{repo}/pulls/{number}/reviews"))
+    # --slurp wraps every page in one outer array; plain --paginate would
+    # concatenate pages into invalid JSON.
+    pages = json.loads(gh("api", "--paginate", "--slurp",
+                          f"repos/{repo}/pulls/{number}/reviews"))
     if any(r.get("user", {}).get("login") == me and r.get("commit_id") == head
-           for r in reviews):
+           for page in pages for r in page):
         print(f"PR #{number}: already reviewed at {head[:7]}, skipping")
         return
+    # no ext-diff/textconv: diff drivers from config never run on PR blobs
+    diff = git("diff", "--no-ext-diff", "--no-textconv", f"{base}...{head}")
     out = agent(agent_cmd, build_prompt(role_md, issue.get("body") or "",
                                         body, diff))
     verdict = parse_verdict(out, "pr")
@@ -163,7 +212,8 @@ def _review_pr(gh: Gh, agent: Agent, agent_cmd: list[str], role_md: str,
     gh("api", "-X", "POST", f"repos/{repo}/pulls/{number}/reviews",
        "-f", f"commit_id={head}", "-f", f"event={event}", "-f", f"body={out}")
     if verdict == "APPROVE":
-        gh("pr", "merge", str(number), "--auto", "--squash")
+        gh("pr", "merge", str(number), "--auto", "--squash",
+           "--match-head-commit", head)
 
 
 def _review_card(gh: Gh, agent: Agent, agent_cmd: list[str], role_md: str,
@@ -187,8 +237,10 @@ def _review_card(gh: Gh, agent: Agent, agent_cmd: list[str], role_md: str,
 
 
 def run(agent_cmd: list[str], dry_run: bool = True, gh: Gh | None = None,
-        agent: Agent | None = None, cards: bool = False) -> int:
+        agent: Agent | None = None, cards: bool = False,
+        git: Git | None = None) -> int:
     gh = gh or _gh
+    git = git or _git
     agent = agent or _agent
     role_md = (ROOT / ".agents" / "reviewer.md").read_text()
     rc = 0
@@ -211,10 +263,11 @@ def run(agent_cmd: list[str], dry_run: bool = True, gh: Gh | None = None,
     repo = gh("repo", "view", "--json", "nameWithOwner", "--jq",
               ".nameWithOwner").strip()
     me = gh("api", "user", "--jq", ".login").strip()
-    prs = json.loads(gh("pr", "list", "--state", "open", "--json", "number"))
+    prs = json.loads(gh("pr", "list", "--state", "open", "--limit", "1000",
+                         "--json", "number"))
     for pr in prs:
         try:
-            _review_pr(gh, agent, agent_cmd, role_md, repo, me,
+            _review_pr(gh, git, agent, agent_cmd, role_md, repo, me,
                        pr["number"], dry_run)
         except Exception as e:
             print(f"PR #{pr['number']}: error: {e}")
@@ -231,6 +284,13 @@ def main(argv: list[str]) -> int:
     if not agent_cmd:
         print("usage: review_queue.py [--live] [--cards] -- <agent command...>",
               file=sys.stderr)
+        return 2
+    # origin/main picks the diff base, so origin must be the real repo
+    repo = _gh("repo", "view", "--json", "nameWithOwner", "--jq",
+               ".nameWithOwner").strip()
+    url = _git("remote", "get-url", "origin").strip().removesuffix(".git")
+    if not re.search(r"github\.com[:/]" + re.escape(repo) + "$", url):
+        print(f"origin {url} is not github.com/{repo}", file=sys.stderr)
         return 2
     return run(agent_cmd, dry_run="--live" not in flags,
                cards="--cards" in flags)

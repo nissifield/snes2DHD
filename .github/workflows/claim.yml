@@ -10,12 +10,13 @@ permissions:
   contents: read
   issues: write
 
-# One claim job per issue; the schedule run shares the 'schedule' group.
-concurrency:
-  group: claim-${{ github.event.issue.number || 'schedule' }}
-
 jobs:
   claim:
+    # Filter first so an ordinary comment can't cancel a queued /claim run.
+    if: github.event_name == 'schedule' || contains(github.event.comment.body, '/claim') || contains(github.event.comment.body, '/unclaim')
+    # One claim job per issue; the schedule run shares the 'schedule' group.
+    concurrency:
+      group: claim-${{ github.event.issue.number || 'schedule' }}
     runs-on: ubuntu-latest
     steps:
       # Default branch only; PR code is never checked out here.
