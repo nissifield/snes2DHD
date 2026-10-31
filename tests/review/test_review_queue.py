@@ -268,7 +268,7 @@ class RunTests(QueueTestCase):
         self.assertIn("event=APPROVE", posts[0])
         self.assertFalse([c for c in gh.calls if c[:2] == ("pr", "review")])
         merges = [c for c in gh.calls if c[:2] == ("pr", "merge")]
-        self.assertEqual(merges[0][-2:], ("--match-head-commit", HEAD))
+        self.assertEqual(merges[0][-2:], ("--match-head-commit", head))
 
     def test_reviews_paginated_dedup(self):
         # my review at this head is on the second page of /reviews
