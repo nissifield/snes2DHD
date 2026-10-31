@@ -62,11 +62,18 @@ def _agent(cmd: list[str], prompt: str) -> str:
 
 
 def _checks_green(rollup: list[dict]) -> bool:
-    for entry in rollup:
-        name = entry.get("name") or entry.get("context")
-        if name == "checks":
-            return (entry.get("conclusion") or entry.get("state")) == "SUCCESS"
-    return False
+    """Every status/check named "checks" on the head must pass; none = red."""
+    checks = [e for e in rollup
+              if (e.get("name") or e.get("context")) == "checks"]
+    if not checks:
+        return False
+    return all((e.get("conclusion") or e.get("state")) == "SUCCESS"
+               for e in checks)
+
+
+# GitHub file status -> git-style letter for pr_checks.check_paths.
+STATUS_MAP = {"added": "A", "removed": "D", "modified": "M", "changed": "M",
+              "renamed": "R", "copied": "C"}
 
 
 def _binary_paths(diff: str) -> list[str]:
@@ -83,32 +90,42 @@ def _binary_paths(diff: str) -> list[str]:
 def _review_pr(gh: Gh, agent: Agent, agent_cmd: list[str], role_md: str,
                repo: str, me: str, number: int, dry_run: bool) -> None:
     data = json.loads(gh("pr", "view", str(number), "--json",
-                         "body,headRefOid,files,statusCheckRollup"))
+                         "headRefOid,statusCheckRollup"))
     head = data["headRefOid"]
     if not _checks_green(data.get("statusCheckRollup", [])):
         print(f"PR #{number}: checks not green, skipping")
         return
-    protected = [f["path"] for f in data.get("files", [])
-                 if card.is_protected(f["path"])]
-    if protected:
-        print(f"PR #{number}: protected path {protected[0]} needs a core "
-              "member, skipping")
+    # CI statuses can be faked, so the deterministic checks run here too.
+    # `gh pr view --json files` caps at 100 files and drops old paths, so the
+    # file list comes from the paginated API and must match changed_files.
+    pull = json.loads(gh("api", f"repos/{repo}/pulls/{number}"))
+    files = json.loads(gh("api", "--paginate",
+                          f"repos/{repo}/pulls/{number}/files"))
+    if len(files) != pull.get("changed_files", -1):
+        print(f"PR #{number}: file count {len(files)} != changed_files "
+              f"{pull.get('changed_files')}, skipping")
+        return
+    changes = [(STATUS_MAP.get(f["status"], "M"), f["filename"],
+                f.get("previous_filename")) for f in files]
+    body = pull.get("body") or ""
+    errors = pr_checks.check_pr_body(body)
+    if not errors:
+        num = int(pr_checks.CLOSES_RE.search(body).group("num"))
+        issue = json.loads(gh("api", f"repos/{repo}/issues/{num}"))
+        labels = [l["name"] for l in issue.get("labels", [])]
+        errors += pr_checks.check_card_trust(issue)
+        errors += pr_checks.check_labels(labels)
+        c = card.parse_card(num, labels, issue.get("body") or "")
+        errors += pr_checks.check_paths(changes, c)
+    if errors:
+        print(f"PR #{number}: deterministic checks failed, skipping")
+        for e in errors:
+            print(f"  {e}")
         return
     diff = gh("pr", "diff", str(number))
     binaries = _binary_paths(diff)
     if binaries:
         print(f"PR #{number}: binary file {binaries[0]} needs a core member, "
-              "skipping")
-        return
-    closes = list(pr_checks.CLOSES_RE.finditer(data.get("body") or ""))
-    if len(closes) != 1 or closes[0].group("prefix") or closes[0].group("url"):
-        print(f"PR #{number}: no single in-repo Closes #N, skipping")
-        return
-    issue = json.loads(
-        gh("api", f"repos/{repo}/issues/{closes[0].group('num')}"))
-    labels = [l["name"] for l in issue.get("labels", [])]
-    if not any(l in pr_checks.CARD_LABELS for l in labels):
-        print(f"PR #{number}: linked issue is not card:ready/card:claimed, "
               "skipping")
         return
     reviews = json.loads(gh("api", f"repos/{repo}/pulls/{number}/reviews"))
@@ -117,7 +134,7 @@ def _review_pr(gh: Gh, agent: Agent, agent_cmd: list[str], role_md: str,
         print(f"PR #{number}: already reviewed at {head[:7]}, skipping")
         return
     out = agent(agent_cmd, build_prompt(role_md, issue.get("body") or "",
-                                        data.get("body") or "", diff))
+                                        body, diff))
     verdict = parse_verdict(out, "pr")
     if verdict is None:
         print(f"PR #{number}: no strict verdict, nothing posted")

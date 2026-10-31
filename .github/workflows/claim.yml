@@ -7,7 +7,12 @@ on:
     - cron: '17 3 * * *'
 
 permissions:
+  contents: read
   issues: write
+
+# One claim job per issue; the schedule run shares the 'schedule' group.
+concurrency:
+  group: claim-${{ github.event.issue.number || 'schedule' }}
 
 jobs:
   claim:
