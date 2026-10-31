@@ -8,3 +8,4 @@
 *.state
 framestate-dumps/
 build/
+__pycache__/

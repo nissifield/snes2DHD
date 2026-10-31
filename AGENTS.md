@@ -7,7 +7,7 @@ You are helping someone contribute to **snes2DHD**, an open-source SNES emulator
 ## 1. Scope
 - Work only on the **one card** (GitHub issue) you were given. No side fixes or "while I'm here" changes.
 - Change only the files listed under **Files you may touch**. Never change anything under **Files you must not touch**.
-- Never edit protected paths: `.github/ .agents/ CODEOWNERS LICENSE* LICENSES/ third_party/ external/ patches/ tools/ci/ tools/review/ tests/golden/ profiles/schema/ ROADMAP.md AGENTS.md`. If the card seems to need one, stop and say so.
+- Never edit protected paths: `.github/ .agents/ CODEOWNERS LICENSE* LICENSES/ third_party/ external/ patches/ tools/ci/ tools/review/ tests/golden/ profiles/schema/ ROADMAP.md AGENTS.md .gitattributes .gitmodules .lfsconfig **/CODEOWNERS`. If the card seems to need one, stop and say so.
 - If the card is unclear or impossible, stop and explain why. Don't guess.
 
 ## 2. Minimal code (ponytail)

@@ -14,3 +14,7 @@
 /profiles/schema/  @nissifield
 /ROADMAP.md        @nissifield
 /AGENTS.md         @nissifield
+/.gitattributes    @nissifield
+/.gitmodules       @nissifield
+/.lfsconfig        @nissifield
+**/CODEOWNERS      @nissifield
