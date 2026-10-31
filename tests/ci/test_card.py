@@ -67,6 +67,42 @@ class CardTests(unittest.TestCase):
         self.assertTrue(card.is_protected("a/b/.gitmodules"))
         self.assertTrue(card.is_protected(".github/CODEOWNERS"))
 
+    def test_parse_issue_form_rendering(self):
+        # Body as GitHub renders the card.yml form: every field label becomes
+        # a ### heading, an empty optional textarea becomes "_No response_".
+        body = """### Goal
+
+Do the docs thing.
+
+### Type
+
+docs
+
+### Size
+
+S
+
+### Files you may touch
+
+docs/**
+README.md
+
+### Files you must not touch
+
+_No response_
+
+### Done when
+
+Tests pass.
+
+### Prompt
+
+Read AGENTS.md.
+"""
+        c = card.parse_card(12, ["card:ready"], body)
+        self.assertEqual(c.allow, ["docs/**", "README.md"])
+        self.assertEqual(c.deny, [])
+
 
 if __name__ == "__main__":
     unittest.main()

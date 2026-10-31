@@ -1,0 +1,45 @@
+name: checks
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+# Read-only: this workflow checks out untrusted PR code and must never write.
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+jobs:
+  checks:
+    name: checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout base SHA
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          path: _base
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Checkout PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          path: pr
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The three-dot diff needs the base SHA object; the base tip is not
+      # necessarily an ancestor of the PR head.
+      - name: Fetch base SHA into PR checkout
+        run: git -C pr fetch --no-tags origin ${{ github.event.pull_request.base.sha }}
+
+      # Checks always run the base branch's copy, never the PR's.
+      - name: Run PR checks
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 _base/tools/ci/pr_checks.py pr
+
+      - name: Run CI unit tests
+        run: python3 -m unittest discover -s _base/tests/ci -t _base

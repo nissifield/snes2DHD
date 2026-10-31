@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Discussions
+    url: https://github.com/nissifield/snes2DHD/discussions
+    about: Questions, ideas and general chat belong here, not in issues.

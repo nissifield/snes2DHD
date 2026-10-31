@@ -1,0 +1,50 @@
+name: Playtest report
+description: Something looked wrong while playing a game.
+title: "Playtest: "
+labels: ["playtest"]
+body:
+  - type: dropdown
+    id: game
+    attributes:
+      label: Game
+      options:
+        - Terranigma PAL/EU
+        - Chrono Trigger US
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: romhash
+    attributes:
+      label: ROM SHA-256, first 8 hex chars
+      description: e.g. the first 8 characters of `sha256sum your-rom.sfc`. Never attach the ROM itself.
+    validations:
+      required: true
+  - type: input
+    id: profile
+    attributes:
+      label: Profile version
+      description: Shown in the emulator's about box or profile file header.
+    validations:
+      required: true
+  - type: textarea
+    id: wrong
+    attributes:
+      label: What looked wrong
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: Screenshot of emulator output
+      description: Drag an image into this box. Emulator output only — never game files.
+    validations:
+      required: false
+  - type: checkboxes
+    id: norom
+    attributes:
+      label: Confirm
+      options:
+        - label: I am not attaching ROMs, save files or FrameState dumps
+          required: true

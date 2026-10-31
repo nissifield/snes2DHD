@@ -68,7 +68,9 @@ def _section(body: str, title: str) -> list[str]:
         if stripped.startswith("###"):
             in_section = stripped == f"### {title}"
         elif in_section and stripped:
-            lines.append(stripped)
+            # GitHub issue forms render an empty optional field as "_No response_".
+            if stripped != "_No response_":
+                lines.append(stripped)
     return lines
 
 

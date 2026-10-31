@@ -1,0 +1,62 @@
+[
+  {
+    "name": "card:ready",
+    "color": "0e8a16",
+    "description": "Task card reviewed and ready to claim"
+  },
+  {
+    "name": "card:claimed",
+    "color": "1d76db",
+    "description": "Task card claimed by a contributor; expires after 7 days without an open PR"
+  },
+  {
+    "name": "card:draft",
+    "color": "fbca04",
+    "description": "Task card still being drafted; not claimable yet"
+  },
+  {
+    "name": "type:profile",
+    "color": "c5def5",
+    "description": "Game profile work"
+  },
+  {
+    "name": "type:code",
+    "color": "c5def5",
+    "description": "Emulator or tooling code"
+  },
+  {
+    "name": "type:docs",
+    "color": "c5def5",
+    "description": "Documentation and copy"
+  },
+  {
+    "name": "type:playtest",
+    "color": "c5def5",
+    "description": "Playtesting"
+  },
+  {
+    "name": "type:art",
+    "color": "c5def5",
+    "description": "Original art and branding"
+  },
+  {
+    "name": "size:S",
+    "color": "d4c5f9",
+    "description": "Small card: fits in one short PR"
+  },
+  {
+    "name": "size:M",
+    "color": "d4c5f9",
+    "description": "Medium card: the maximum for a single PR"
+  },
+  {
+    "name": "needs-core",
+    "color": "b60205",
+    "description": "Needs a core member; never auto-merges"
+  },
+  {
+    "name": "playtest",
+    "color": "f9d0c4",
+    "description": "Playtest report"
+  }
+]
