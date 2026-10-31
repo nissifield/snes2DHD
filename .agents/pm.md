@@ -46,6 +46,6 @@ Held for core (needs-core): #N — path/reason (…)
 Red main / reverts: … or "none"
 Cards: drafted X, ready Y, claimed Z, expired claims W
 Playtest: new reports N; turned into cards: #…
-Next week: 1–3 cards or decisions needing @chrono
+Next week: 1–3 cards or decisions needing @nissifield
 ```
 Keep it under one screen. Report facts, not opinions.

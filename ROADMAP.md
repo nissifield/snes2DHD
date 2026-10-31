@@ -7,7 +7,7 @@ Milestones come from the design spec, §9. Each one is done when all of its outc
 - The README skeleton with branding, CONTRIBUTE.md, and the card and playtest issue forms exist.
 - AGENTS.md and the PM and Reviewer roles exist. A card can go from draft to ready through Reviewer `CARD_OK`.
 - CI `checks` runs the base-branch scanner and card/PR checks. Branch protection and auto-merge are on.
-- The claim bot (`/claim`, 7-day expiry) and the Mattermost notifier are running.
+- The claim bot (`/claim`, 7-day expiry) and the core-team notifier are running.
 
 ## M1 — It plays
 - The ares SNES core is vendored at a pinned commit. The tap is a small patch set in `patches/ares/`.

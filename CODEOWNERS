@@ -10,11 +10,14 @@
 /patches/          @nissifield
 /tools/ci/         @nissifield
 /tools/review/     @nissifield
+/tools/admin/      @nissifield
+/tests/ci/         @nissifield
+/tests/review/     @nissifield
 /tests/golden/     @nissifield
 /profiles/schema/  @nissifield
 /ROADMAP.md        @nissifield
 /AGENTS.md         @nissifield
-/.gitattributes    @nissifield
-/.gitmodules       @nissifield
-/.lfsconfig        @nissifield
+**/.gitattributes  @nissifield
+**/.gitmodules     @nissifield
+**/.lfsconfig      @nissifield
 **/CODEOWNERS      @nissifield

@@ -34,7 +34,7 @@ The Reviewer agent checks your PR against the card. CI must pass before auto-mer
 
 ## Playtesting
 
-Prefer playing to editing? Follow the [playtesting guide](./docs/playtesting.md) once nightlies arrive in M1. **Profile cards need your own ROM and a local build.** Real-game FrameState dumps stay local; never share or commit them.
+Prefer playing to editing? Follow the [playtesting guide](./docs/playtesting.md) once nightlies arrive in M1. **Profile cards need your own ROM and a local build.** Images and other binary files are welcome but always wait for a core member (PNG or SVG only). Real-game FrameState dumps stay local; never share or commit them.
 
 ## Appendix
 
