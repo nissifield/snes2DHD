@@ -4,10 +4,13 @@ import re
 from typing import NamedTuple
 
 # CODEOWNERS-gated paths; PRs touching these always need a core member.
+# Matched case-insensitively; any basename of CODEOWNERS is also protected.
 PROTECTED = (
+    ".gitattributes",
     ".github/",
+    ".gitmodules",
+    ".lfsconfig",
     ".agents/",
-    "CODEOWNERS",
     "LICENSE*",
     "LICENSES/",
     "third_party/",
@@ -32,16 +35,21 @@ class Card(NamedTuple):
 def glob_match(pattern: str, path: str) -> bool:
     """fnmatch-style match where `*` stays within a directory and `**` crosses them."""
     pat = re.escape(pattern)
+    pat = pat.replace(r"\*\*/", r"(?:.*/)?")  # **/ also matches zero directories
     pat = pat.replace(r"\*\*", ".*").replace(r"\*", "[^/]*").replace(r"\?", "[^/]")
     return re.fullmatch(pat, path) is not None
 
 
 def is_protected(path: str) -> bool:
+    lower = path.lower()
+    if lower.rsplit("/", 1)[-1] == "codeowners":
+        return True
     for entry in PROTECTED:
+        entry = entry.lower()
         if entry.endswith("/"):
-            if path == entry[:-1] or path.startswith(entry):
+            if lower == entry[:-1] or lower.startswith(entry):
                 return True
-        elif fnmatch.fnmatchcase(path, entry):
+        elif fnmatch.fnmatchcase(lower, entry):
             return True
     return False
 
