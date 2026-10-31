@@ -32,7 +32,7 @@ jobs:
         run: |
           git init -q pr
           git -C pr fetch --no-tags https://github.com/${{ github.repository }} +refs/pull/${{ github.event.pull_request.number }}/head:refs/pr/head ${{ github.event.pull_request.base.sha }}
-          git -C pr -c core.hooksPath=/dev/null checkout -q --detach refs/pr/head
+          git -C pr -c core.hooksPath=/dev/null -c filter.lfs.smudge= -c filter.lfs.process= -c filter.lfs.required=false checkout -q --detach refs/pr/head
 
       # Checks always run the base branch's copy, never the PR's.
       - name: Run PR checks
