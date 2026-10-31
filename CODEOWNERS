@@ -1,0 +1,16 @@
+# Protected paths: never auto-merged; a human core member must review.
+# Bot accounts must never appear here, directly or via a team.
+/.github/          @nissifield
+/.agents/          @nissifield
+/CODEOWNERS        @nissifield
+/LICENSE*          @nissifield
+/LICENSES/         @nissifield
+/third_party/      @nissifield
+/external/         @nissifield
+/patches/          @nissifield
+/tools/ci/         @nissifield
+/tools/review/     @nissifield
+/tests/golden/     @nissifield
+/profiles/schema/  @nissifield
+/ROADMAP.md        @nissifield
+/AGENTS.md         @nissifield

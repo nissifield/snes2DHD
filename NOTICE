@@ -1,0 +1,16 @@
+snes2DHD
+Copyright (c) 2026 snes2DHD contributors
+
+Licence map
+- Source code, tools, CI, docs: Mozilla Public License 2.0 (LICENSE)
+- Game profiles (profiles/) and project-original assets (assets/): CC BY-SA 4.0 (LICENSES/CC-BY-SA-4.0.txt)
+- third_party/ponytail: MIT (third_party/ponytail/LICENSE); ponytail rule text is adapted in
+  AGENTS.md and .agents/*.md with attribution
+- external/ares (from M1): ISC, ares team, Near et al. (external/ares/LICENSE)
+- assets/branding tagline font: DejaVu Sans (Bitstream Vera Font License), outlined; see
+  assets/branding/README-branding.md
+
+This repository contains no ROMs, no game-derived data dumps and no redrawn game artwork.
+Bring your own legally obtained ROM.
+
+Inspiration (no code or data used): 3dSen by Geod Studio; Octopath Traveler's HD-2D style.
