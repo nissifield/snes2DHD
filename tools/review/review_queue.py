@@ -95,6 +95,7 @@ def _check_commit(git: Git, head: str,
             meta, path = entry.split("\t", 1)
             modes[path] = meta.split(" ", 1)[0]
     errors = []
+    seen = set()
     with tempfile.TemporaryDirectory() as tmp:
         for status, path, _ in changes:
             if status == "D":
@@ -106,7 +107,12 @@ def _check_commit(git: Git, head: str,
             # the mode is checked here rather than by check_files' lstat
             elif modes.get(path) not in ("100644", "100755"):
                 errors.append(f"not a regular file: {path}")
+            # on a case-insensitive disk A.json and a.json share one temp file,
+            # so one blob would be scanned in place of the other
+            elif path.casefold() in seen:
+                errors.append(f"path collision: {path}")
             else:
+                seen.add(path.casefold())
                 out = Path(tmp, path)
                 out.parent.mkdir(parents=True, exist_ok=True)
                 out.write_bytes(git("show", f"{head}:{path}")
@@ -206,7 +212,8 @@ def _review_pr(gh: Gh, git: Git, agent: Agent, agent_cmd: list[str],
     gh("api", "-X", "POST", f"repos/{repo}/pulls/{number}/reviews",
        "-f", f"commit_id={head}", "-f", f"event={event}", "-f", f"body={out}")
     if verdict == "APPROVE":
-        gh("pr", "merge", str(number), "--auto", "--squash")
+        gh("pr", "merge", str(number), "--auto", "--squash",
+           "--match-head-commit", head)
 
 
 def _review_card(gh: Gh, agent: Agent, agent_cmd: list[str], role_md: str,
@@ -277,6 +284,13 @@ def main(argv: list[str]) -> int:
     if not agent_cmd:
         print("usage: review_queue.py [--live] [--cards] -- <agent command...>",
               file=sys.stderr)
+        return 2
+    # origin/main picks the diff base, so origin must be the real repo
+    repo = _gh("repo", "view", "--json", "nameWithOwner", "--jq",
+               ".nameWithOwner").strip()
+    url = _git("remote", "get-url", "origin").strip().removesuffix(".git")
+    if not re.search(r"github\.com[:/]" + re.escape(repo) + "$", url):
+        print(f"origin {url} is not github.com/{repo}", file=sys.stderr)
         return 2
     return run(agent_cmd, dry_run="--live" not in flags,
                cards="--cards" in flags)

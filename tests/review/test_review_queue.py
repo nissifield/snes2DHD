@@ -267,6 +267,8 @@ class RunTests(QueueTestCase):
         self.assertIn(f"commit_id={head}", posts[0])
         self.assertIn("event=APPROVE", posts[0])
         self.assertFalse([c for c in gh.calls if c[:2] == ("pr", "review")])
+        merges = [c for c in gh.calls if c[:2] == ("pr", "merge")]
+        self.assertEqual(merges[0][-2:], ("--match-head-commit", HEAD))
 
     def test_reviews_paginated_dedup(self):
         # my review at this head is on the second page of /reviews
@@ -410,6 +412,18 @@ class PinnedCommitTests(QueueTestCase):
         self.assertEqual(agent.calls, [])
         self.assertIn("core member", out)
 
+
+
+class CommitCheckTest(unittest.TestCase):
+    def test_case_collision_rejected(self):
+        tree = ("100644 blob a\tprofiles/x/A.json\0"
+                "100644 blob b\tprofiles/x/a.json\0")
+        def git(*args):
+            return tree if args[0] == "ls-tree" else "{}"
+        errors = review_queue._check_commit(
+            git, "h", [("A", "profiles/x/A.json", None),
+                       ("A", "profiles/x/a.json", None)])
+        self.assertIn("path collision: profiles/x/a.json", errors)
 
 if __name__ == "__main__":
     unittest.main()
