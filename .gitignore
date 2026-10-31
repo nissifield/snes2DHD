@@ -1,0 +1,10 @@
+# ROMs and game-derived data never enter this repo
+*.sfc
+*.smc
+*.fig
+*.swc
+*.bs
+*.srm
+*.state
+framestate-dumps/
+build/
