@@ -26,7 +26,8 @@ gh api -X PUT "repos/$R/topics" --silent --input - <<'EOF'
 EOF
 
 # Actions: read-only default token, workflows can't approve PRs,
-# fork PR workflows wait for approval for every outside contributor.
+# fork `pull_request` workflows wait for approval for every outside contributor
+# (this doesn't gate the pull_request_target `checks` gate, which only reads PR files).
 gh api -X PUT "repos/$R/actions/permissions/workflow" --silent --input - <<'EOF'
 {"default_workflow_permissions": "read", "can_approve_pull_request_reviews": false}
 EOF

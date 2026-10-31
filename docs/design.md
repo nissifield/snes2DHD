@@ -103,7 +103,7 @@ Two agents and plain automation. Nothing becomes an agent if a GitHub feature or
 | Nightly | GitHub Action | GitHub | Builds Linux and Windows, publishes a rolling `nightly` prerelease |
 | Notifier | cron script | a core member's machine | Polls GitHub and relays to the core team's private chat |
 
-- **Core members** each run the PM/Reviewer with their own model quota. Work is split by GitHub assignment so two reviewers never duplicate.
+- **Core members** each run the PM/Reviewer with their own model quota. *Planned once there are several core members:* work is split by GitHub assignment so two reviewers never duplicate.
 - Agent definitions live in the repo (`.agents/pm.md`, `.agents/reviewer.md`) so any core member's tool can load the same role. Read-only roles get no edit tools.
 - **A card isn't published (`card:ready`) until the Reviewer has passed it** — a contributor's model knows only what the card says.
 
@@ -130,13 +130,13 @@ Playtesters: download the nightly, play with your own ROM, and file a Playtest r
 
 A PR merges automatically only when **all** hold:
 1. A core reviewer approved **the latest commit** (stale approvals dismissed; the most recent push needs approval). Reviewer agents post as their core member's own account; a separate chores bot account is never a CODEOWNER.
-2. CI is green: build, unit tests, fixture image comparisons, profile schema, and the ROM/licence scanner (binary blobs, large files, ROM headers, encoded payloads, files outside the card's allowlist).
+2. CI is green: the ROM/licence scanner (binary blobs, large files, ROM headers, encoded payloads) and the card/PR checks (files outside the card's allowlist, protected paths, PR body). Build, unit tests, fixture image comparisons and the profile schema join as M1–M3 land.
 3. No **protected path** is touched — everything that defines or executes the rules: `.github/`, `.agents/`, `CODEOWNERS`, licences, `third_party/`, `external/`, `patches/`, `tools/ci/`, `tools/review/`, `tools/admin/`, `tests/ci/`, `tests/review/`, `tests/golden/`, the profile schema, `ROADMAP.md`, `AGENTS.md`, git metadata files. These wait for a human core member. Binary files always wait for one too.
 4. Fork PRs never receive secrets. The required `checks` workflow runs on `pull_request_target` from the **base branch** with a read-only token and treats the PR head as data only (fetched and read, never executed) — under plain `pull_request` a fork could run its own copy of the workflow and fake the status. The review runner re-runs the deterministic checks on the exact reviewed commit before approving, and the merge is pinned to that commit.
 
-PR content is untrusted data; the review prompt says so, and approval also requires the deterministic checks, so injected text alone can't merge anything. Every merge is revertable; a red `main` after merge opens a revert PR and alerts the core team.
+PR content is untrusted data; the review prompt says so, and approval also requires the deterministic checks, so injected text alone can't merge anything. Every merge is revertable. *Planned:* a red `main` after merge opens a revert PR and alerts the core team.
 
-### 6.4 Notifications
+### 6.4 Notifications (planned)
 
 - GitHub: a pinned **Core digest** Discussion — auto-merges, rejections, protected-path holds, red `main`.
 - The core team's private chat, via the notifier; humans are pinged only for holds, red `main` and security flags.

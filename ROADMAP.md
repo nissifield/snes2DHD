@@ -1,6 +1,6 @@
 # snes2DHD roadmap
 
-Milestones come from the design spec, §9. Each one is done when all of its outcomes hold.
+Milestones come from the [design](docs/design.md), §9. Each one is done when all of its outcomes hold.
 
 ## M0 — Repo & team
 - Licences, NOTICE and CODEOWNERS are in place. Protected paths need @nissifield.
