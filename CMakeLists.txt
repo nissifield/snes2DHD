@@ -59,8 +59,14 @@ target_link_libraries(snes2dhd_core PUBLIC Threads::Threads ${CMAKE_DL_LIBS})
 add_executable(snes2dhd-headless src/headless/main.cpp)
 target_link_libraries(snes2dhd-headless PRIVATE snes2dhd_core)
 
+add_executable(test_reload tests/headless/test_reload.cpp)
+target_link_libraries(test_reload PRIVATE snes2dhd_core)
+
 enable_testing()
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 add_test(NAME headless_min_rom
   COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tests/headless/test_headless.py $<TARGET_FILE:snes2dhd-headless>
+)
+add_test(NAME headless_reload
+  COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tests/headless/test_reload.py $<TARGET_FILE:test_reload>
 )

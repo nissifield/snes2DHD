@@ -140,9 +140,11 @@ std::string load(const std::string& rom_path) {
     return "ares: failed to connect the cartridge";
   }
 
-  root->power();
   // System::power seeds from the clock and fills chip RAM before a seed can be
-  // set, so redo the power pass from a fixed seed to make that RAM reproducible.
+  // set, so run its single power pass here from a fixed seed. Calling it twice
+  // would leave one unconsumed Thread entry per chip after the first run.
+  for(auto& setting : root->find<ares::Node::Setting::Setting>()) setting->setLatch();
+  ares::SuperFamicom::random.entropy(ares::Random::Entropy::Low);
   ares::SuperFamicom::random.seed(ares::Random::Default);
   ares::SuperFamicom::cpu.power(false);
   ares::SuperFamicom::smp.power(false);
