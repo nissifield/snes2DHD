@@ -25,7 +25,7 @@ Why: 3dSen proved per-game profiles make old games feel new; nothing open does t
 
 **Anti-goals** — failure even if it "works":
 - Shipping or committing any ROM data or game-derived data dumps.
-- Copying code or data from Super ZSNES or any licence-incompatible emulator.
+- Using code or data from Super ZSNES or any unlicensed or licence-incompatible source. Compatible reuse with recorded provenance is preferred over rewriting (D1).
 - A reviewer agent that can be talked (prompt-injected) into approving; contributors able to change the rules that judge them.
 - Bloat: abstractions, options and frameworks nobody needed (the project is "ponytail" style).
 - A game looking worse than stock with its profile on.
@@ -114,7 +114,7 @@ A GitHub issue from a template:
 - **Goal** (one sentence), **type** (`profile` / `code` / `docs` / `playtest` / `art`), size (S/M).
 - **Files you may touch** (allowlist) and **must not touch**.
 - **Done when**: acceptance commands and expected output; for profile cards, the screenshots/notes to attach.
-- **The prompt**: a fenced, self-contained block the contributor pastes as-is. It embeds the rules (no ROM data, no copied code, stay in the allowlist, minimalism, how to hand back the result).
+- **The prompt**: a fenced, self-contained block the contributor pastes as-is. It embeds the rules (no ROM data, no unlicensed or incompatible code, stay in the allowlist, minimalism, how to hand back the result).
 
 ### 6.2 Contributor flow (see `CONTRIBUTE.md`)
 
@@ -122,7 +122,7 @@ A GitHub issue from a template:
 2. Copy the card's prompt into your AI tool.
    - **Coding agents** (Codex, Claude Code, Kimi, …): run it in a clone of your fork; it opens the PR.
    - **Browser chats** (ChatGPT, Claude, Gemini, …): it replies with complete files plus a PR title/body; paste them via GitHub's web editor on your fork.
-3. The PR body links the card (`Closes #N`) and ticks one box: "I have the right to submit this under the project's licences and it contains no ROM data or copied code." No CLA, no DCO sign-off (the web editor can't add it).
+3. The PR body links the card (`Closes #N`) and ticks one box: "I have the right to submit this under the project's licences and it contains no ROM data or copied code." Here "copied code" means code copied without following the reuse rules in D1. No CLA, no DCO sign-off (the web editor can't add it).
 
 Playtesters: download the nightly, play with your own ROM, and file a Playtest report (game, ROM hash prefix, profile version, what looked wrong, screenshot of emulator output).
 
@@ -167,9 +167,9 @@ PR content is untrusted data; the review prompt says so, and approval also requi
 
 ## 10. Decisions
 
-- **D1 Licences**: code MPL-2.0; profiles and assets CC BY-SA 4.0. ares stays ISC; ponytail text MIT (notices in `third_party/`).
+- **D1 Licences**: project-original code AGPL-3.0-or-later (earlier MPL-2.0 commits and releases stay MPL-2.0); profiles and assets CC BY-SA 4.0. ares stays ISC with bundled sljit BSD-2-Clause; ponytail text MIT (notices in `third_party/`). Suitable existing code is reused before rewriting, if the exact source's licence is checked first, is compatible with AGPL-3.0-or-later (checked per source and version; not every GPL-family licence is), and its notices, licence and provenance are kept. Third-party code is never relicensed.
 - **D2 No redrawn HD art in the repo.** Profiles carry geometry, lighting and rules only (plus project-original height/normal maps).
 - **D3 Core team at launch: the maintainer only** (sole human CODEOWNER). Protected-path PRs and golden-image changes queue for him; the notifier batches them.
 - **D4 Real-game FrameState dumps stay local** — never shared or committed. Tile-graphics hashes and WRAM addresses are allowed in profiles, so profile cards target contributors with their own ROM and a local build; browser-chat contributors get code, docs, tooling and schema cards.
 - **D5 Golden images are protected** (renderer-changing PRs wait for a human).
-- **D6 Prior Terranigma work by the maintainer** (tile decoder, asset schema, scene selectors — project-authored code only, never ROM data) may be relicensed into snes2DHD under MPL-2.0.
+- **D6 Prior Terranigma work by the maintainer** (tile decoder, asset schema, scene selectors — project-authored code only, never ROM data) may be relicensed into snes2DHD under AGPL-3.0-or-later.

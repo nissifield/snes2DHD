@@ -58,7 +58,7 @@ See [ROADMAP.md](./ROADMAP.md) for milestone outcomes and [docs/design.md](./doc
 
 ## Licences and credits
 
-Code is **MPL-2.0**; profiles and project-original assets are **CC BY-SA 4.0**. See [NOTICE](./NOTICE) for the licence map and third-party notices.
+Project-original code is **AGPL-3.0-or-later**; profiles and project-original assets are **CC BY-SA 4.0**. See [NOTICE](./NOTICE) for the licence map and third-party notices.
 
 - **ares — ISC:** the planned SNES emulation core.
 - **ponytail — MIT:** the project's minimal-code contribution rules.
