@@ -82,3 +82,4 @@ add_test(NAME frontend_smoke
   COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEO_DRIVER=offscreen $<TARGET_FILE:snes2dhd> --quit-after 120 ${CMAKE_BINARY_DIR}/min.sfc
 )
 set_tests_properties(frontend_smoke PROPERTIES FIXTURES_REQUIRED min_rom TIMEOUT 120)
+add_test(NAME frame_hashes COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tests/roms/check_frame_hashes.py --headless $<TARGET_FILE:snes2dhd-headless> --roms ${CMAKE_BINARY_DIR}/test-roms --golden ${CMAKE_SOURCE_DIR}/tests/golden/frame-hashes.txt)
