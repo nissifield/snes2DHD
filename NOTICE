@@ -6,7 +6,8 @@ Licence map
 - Game profiles (profiles/) and project-original assets (assets/): CC BY-SA 4.0 (LICENSES/CC-BY-SA-4.0.txt)
 - third_party/ponytail: MIT (third_party/ponytail/LICENSE); ponytail rule text is adapted in
   AGENTS.md and .agents/*.md with attribution
-- external/ares (from M1): ISC, ares team, Near et al. (external/ares/LICENSE)
+- external/ares (from M1): ISC, ares team, Near et al. (external/ares/LICENSE);
+  bundled sljit is BSD-2-Clause, Zoltan Herczeg (external/ares/thirdparty/sljit/LICENSE)
 - assets/branding tagline font: DejaVu Sans (Bitstream Vera Font License), outlined; see
   assets/branding/README-branding.md
 

@@ -181,7 +181,12 @@ class VendorAresTest(unittest.TestCase):
         self.assertRegex(pin["commit"], r"\A[0-9a-f]{40}\Z")
         self.assertEqual(pin["paths"], ["LICENSE", "ares/ares",
                                         "ares/component", "ares/sfc",
-                                        "nall", "libco"])
+                                        "nall", "libco",
+                                        "thirdparty/sljit/sljit_src",
+                                        "thirdparty/sljit/LICENSE",
+                                        "thirdparty/sljit.h",
+                                        "thirdparty/sljitConfigPre.h",
+                                        "thirdparty/sljitConfigPost.h"])
 
 
 if __name__ == "__main__":
