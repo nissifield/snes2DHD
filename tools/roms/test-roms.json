@@ -1,0 +1,20 @@
+[
+  {
+    "file": "16-Bit-Hell.sfc",
+    "url": "https://raw.githubusercontent.com/demorgancoder/16-Bit-Hell/1e8f221131010c507b765604756a3622bdfe75f9/16-Bit%20Hell.sfc",
+    "sha256": "b5954a49404ac471faa6565032a7638f403ecd14574e82df949fc322f581acef",
+    "license": "CC0-1.0",
+    "license_url": "https://raw.githubusercontent.com/demorgancoder/16-Bit-Hell/1e8f221131010c507b765604756a3622bdfe75f9/LICENSE",
+    "source": "https://github.com/demorgancoder/16-Bit-Hell/blob/1e8f221131010c507b765604756a3622bdfe75f9/16-Bit%20Hell.sfc",
+    "frames": 300
+  },
+  {
+    "file": "coindash.sfc",
+    "url": "https://raw.githubusercontent.com/loic-laopane/Snes-game/25dbf61b90d432a3e5d93c50bd06d4bd40b635a2/rom/coindash.sfc",
+    "sha256": "90bf4ef2d19513d3301e2619f26e6b2b5a803ef38a20d469f4a77d3b803fed25",
+    "license": "MIT",
+    "license_url": "https://raw.githubusercontent.com/loic-laopane/Snes-game/25dbf61b90d432a3e5d93c50bd06d4bd40b635a2/LICENSE",
+    "source": "https://github.com/loic-laopane/Snes-game/blob/25dbf61b90d432a3e5d93c50bd06d4bd40b635a2/rom/coindash.sfc",
+    "frames": 300
+  }
+]
