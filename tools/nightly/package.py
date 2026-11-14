@@ -53,9 +53,11 @@ def write_archive(out, members):
                 for source, member in members:
                     archive.write(source, member)
         else:
-            with tarfile.open(temporary, "w:gz") as archive:
+            with tarfile.open(temporary, "w:gz", dereference=True) as archive:
                 for source, member in members:
                     archive.add(source, member)
+        # mkstemp creates 0600; a published archive needs normal read access.
+        os.chmod(temporary, 0o644)
         os.replace(temporary, out)
     finally:
         try:

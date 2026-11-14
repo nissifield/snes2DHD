@@ -3,6 +3,7 @@ import contextlib
 import importlib.util
 import io
 import shutil
+import stat
 import tarfile
 import tempfile
 import unittest
@@ -54,6 +55,7 @@ class PackageTest(unittest.TestCase):
 
         self.assertEqual(code, 0, stderr)
         self.assertEqual(stdout, f"wrote {out} (5 files)\n")
+        self.assertEqual(stat.S_IMODE(out.stat().st_mode), 0o644)
         with tarfile.open(out) as archive:
             self.assertEqual(archive.getnames(), [
                 "snes2dhd/app",
@@ -70,6 +72,31 @@ class PackageTest(unittest.TestCase):
                 archive.extractfile("snes2dhd/licenses/ares-LICENSE").read(),
                 b"ares licence\n")
 
+    def test_tar_gz_follows_symlinked_input_and_licence(self):
+        out = self.tmp / "dist" / "snes2dhd-linux-x86_64.tar.gz"
+        real_app = self.tmp / "real-app"
+        real_app.write_bytes(b"app")
+        links = self.tmp / "links"
+        links.mkdir()
+        linked_app = links / "app"
+        linked_app.symlink_to(real_app)
+        real_licence = self.tmp / "real-LICENSE"
+        real_licence.write_bytes(b"project licence\n")
+        (self.root / "LICENSE").unlink()
+        (self.root / "LICENSE").symlink_to(real_licence)
+
+        code, stdout, stderr = self.run_package(out, [linked_app])
+
+        self.assertEqual(code, 0, stderr)
+        with tarfile.open(out) as archive:
+            for member in archive.getmembers():
+                self.assertTrue(member.isfile(), member.name)
+                self.assertFalse(member.issym(), member.name)
+                self.assertFalse(member.islnk(), member.name)
+            self.assertEqual(archive.extractfile("snes2dhd/app").read(), b"app")
+            self.assertEqual(archive.extractfile("snes2dhd/LICENSE").read(),
+                             b"project licence\n")
+
     def test_zip_exact_members_and_exec_mode(self):
         out = self.tmp / "dist" / "snes2dhd-windows-x86_64.zip"
 
@@ -77,6 +104,7 @@ class PackageTest(unittest.TestCase):
 
         self.assertEqual(code, 0, stderr)
         self.assertEqual(stdout, f"wrote {out} (5 files)\n")
+        self.assertEqual(stat.S_IMODE(out.stat().st_mode), 0o644)
         with zipfile.ZipFile(out) as archive:
             self.assertEqual(archive.namelist(), [
                 "snes2dhd/app",
@@ -118,6 +146,16 @@ class PackageTest(unittest.TestCase):
         self.assertIn("missing-bin", stderr)
         self.assertFalse(out.exists())
         self.assertFalse(out.parent.exists())
+
+    def test_output_directory_failure_leaves_no_temporary_archive(self):
+        out = self.tmp / "dist" / "snes2dhd.tar.gz"
+        out.mkdir(parents=True)
+
+        code, stdout, stderr = self.run_package(out, [self.app])
+
+        self.assertEqual(code, 1)
+        self.assertTrue(out.is_dir())
+        self.assertEqual([p.name for p in out.parent.iterdir()], [out.name])
 
     def test_duplicate_base_names_write_no_archive(self):
         other = self.tmp / "other"
