@@ -14,7 +14,8 @@ Milestones come from the [design](docs/design.md), §9. Each one is done when al
 - The tap adapter emits FrameState as plain, serialisable data.
 - The SDL3 frontend plays a ROM in plain 2D with audio, input and save states.
 - A headless test harness checks frame hashes on open-licensed homebrew ROMs in CI.
-- Linux and Windows nightlies are published as the rolling `nightly` prerelease.
+- Linux nightlies are published as the rolling `nightly` prerelease.
+- Windows support (card M1-06) is deferred to backlog, not an M1 completion or Linux release gate. Revisit only when the maintainer brings Windows back into scope.
 
 ## M2 — Flat HD-2D
 - The scene builder `(FrameState, Profile) → Scene` is a pure function. With no profile, the picture is identical to stock 2D.

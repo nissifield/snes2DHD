@@ -34,7 +34,7 @@ Why: 3dSen proved per-game profiles make old games feel new; nothing open does t
 
 - **Legal**: users supply their own ROMs; the emulator verifies SHA-256 against the profile. CI uses only open-licensed homebrew/test ROMs and synthetic PPU fixtures. Real-game verification happens on contributors' machines (playtest).
 - **Base**: ares (`ares-emulator/ares`, ISC). Only its SNES core and required support library, vendored at a pinned commit. ares has no public hook for per-scanline PPU/VRAM writes, so the tap needs a **small patch set** kept as separate, upstreamable files in `patches/ares/` — no hidden edits in the vendored tree.
-- **Platforms**: Linux and Windows first; macOS best-effort later.
+- **Platforms**: Linux first. Windows (M1-06) is backlog, not a Linux release gate; revisit when the maintainer restores it to scope. macOS remains best-effort later.
 - **Hardware**: a mid-range GPU from the last ~6 years holds 60 fps at 1080p.
 - **Ponytail**: minimal code; prefer platform/library features; every non-trivial piece has a small test. Ponytail rule text carries its MIT notice (`third_party/ponytail/`).
 
@@ -100,7 +100,7 @@ Two agents and plain automation. Nothing becomes an agent if a GitHub feature or
 | **Reviewer** | agent | core members' machines | Reviews each PR **against its card**: scope, ponytail rules, tests, licence/provenance |
 | Merge gate | GitHub-native | GitHub | Branch protection, native auto-merge, CODEOWNERS |
 | Claim bot | small GitHub Action (no PR code, no secrets) | GitHub | `/claim` assigns a card; stale claims expire |
-| Nightly | GitHub Action | GitHub | Builds Linux and Windows, publishes a rolling `nightly` prerelease |
+| Nightly | GitHub Action | GitHub | Builds Linux, publishes a rolling `nightly` prerelease; Windows is backlog |
 | Notifier | cron script | a core member's machine | Polls GitHub and relays to the core team's private chat |
 
 - **Core members** each run the PM/Reviewer with their own model quota. *Planned once there are several core members:* work is split by GitHub assignment so two reviewers never duplicate.

@@ -16,7 +16,7 @@ Our first showcase targets are **Terranigma (PAL/EU)** and **Chrono Trigger (US)
 
 ## Play
 
-Bring your own legally obtained ROM. Starting in **M1**, Linux and Windows builds will be available from the repository's rolling [nightly release](https://github.com/nissifield/snes2DHD/releases/tag/nightly). There are no playable downloads at M0.
+Bring your own legally obtained ROM. Starting in **M1**, Linux builds will be available from the repository's rolling [nightly release](https://github.com/nissifield/snes2DHD/releases/tag/nightly). There are no playable downloads at M0.
 
 When builds arrive, follow the [playtesting guide](./docs/playtesting.md) to compare profile output with stock 2D and report problems.
 
@@ -48,7 +48,7 @@ Real-game FrameState dumps stay local. Repository test fixtures will use synthet
 | Milestone | Planned outcome |
 | --- | --- |
 | M0 — Repo & agent team | Contribution docs, task cards, review and CI setup |
-| M1 — It plays | ares core, stock 2D frontend, Linux and Windows nightlies |
+| M1 — It plays | ares core, stock 2D frontend, Linux nightlies |
 | M2 — Flat HD-2D | Planes, billboards, lighting and post effects |
 | M3 — Showcase profiles v1 | Terranigma and Chrono Trigger opening areas; comparison shots |
 | M4 — Voxel mode | Voxel geometry mixed with flat elements |
