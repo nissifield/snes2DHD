@@ -62,6 +62,10 @@ target_link_libraries(snes2dhd-headless PRIVATE snes2dhd_core)
 add_executable(test_reload tests/headless/test_reload.cpp)
 target_link_libraries(test_reload PRIVATE snes2dhd_core)
 
+find_package(SDL3 REQUIRED CONFIG COMPONENTS SDL3)
+add_executable(snes2dhd src/frontend/main.cpp)
+target_link_libraries(snes2dhd PRIVATE snes2dhd_core SDL3::SDL3)
+
 enable_testing()
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 add_test(NAME headless_min_rom
@@ -70,3 +74,11 @@ add_test(NAME headless_min_rom
 add_test(NAME headless_reload
   COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tests/headless/test_reload.py $<TARGET_FILE:test_reload>
 )
+add_test(NAME make_min_rom
+  COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tests/headless/make_min_rom.py ${CMAKE_BINARY_DIR}/min.sfc
+)
+set_tests_properties(make_min_rom PROPERTIES FIXTURES_SETUP min_rom)
+add_test(NAME frontend_smoke
+  COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEO_DRIVER=offscreen $<TARGET_FILE:snes2dhd> --quit-after 120 ${CMAKE_BINARY_DIR}/min.sfc
+)
+set_tests_properties(frontend_smoke PROPERTIES FIXTURES_REQUIRED min_rom TIMEOUT 120)
