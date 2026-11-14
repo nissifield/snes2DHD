@@ -141,8 +141,15 @@ std::string load(const std::string& rom_path) {
   }
 
   root->power();
-  // System::power seeds from the clock; fix the seed so runs are reproducible.
+  // System::power seeds from the clock and fills chip RAM before a seed can be
+  // set, so redo the power pass from a fixed seed to make that RAM reproducible.
   ares::SuperFamicom::random.seed(ares::Random::Default);
+  ares::SuperFamicom::cpu.power(false);
+  ares::SuperFamicom::smp.power(false);
+  ares::SuperFamicom::dsp.power(false);
+  ares::SuperFamicom::ppu.power(false);
+  ares::SuperFamicom::cartridge.power(false);
+  ares::SuperFamicom::scheduler.power(ares::SuperFamicom::cpu);
 
   return {};
 }

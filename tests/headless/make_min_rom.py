@@ -15,10 +15,22 @@ CODE = bytes([
     0x80, 0xFE,
 ])
 
+# Same, but colour 0 comes from work RAM $0000/$0001 so the frame exposes the
+# power-on RAM contents instead of hiding them behind a constant.
+RAM_CODE = bytes([
+    0x78, 0x18, 0xFB,
+    0xA9, 0x80, 0x8D, 0x00, 0x21,
+    0x9C, 0x21, 0x21,
+    0xAD, 0x00, 0x00, 0x8D, 0x22, 0x21,
+    0xAD, 0x01, 0x00, 0x29, 0x7F, 0x8D, 0x22, 0x21,
+    0xA9, 0x0F, 0x8D, 0x00, 0x21,
+    0x80, 0xFE,
+])
 
-def build() -> bytes:
+
+def build(code: bytes = CODE) -> bytes:
     rom = bytearray(b"\xff" * 32768)
-    rom[0:len(CODE)] = CODE
+    rom[0:len(code)] = code
     rom[0x7FC0:0x7FD5] = b"SNES2DHD MIN TEST".ljust(21, b" ")
     # LoROM, 32 KiB, no coprocessor, version 0.
     rom[0x7FD5:0x7FDC] = bytes([0x20, 0x00, 0x05, 0x00, 0x01, 0x00, 0x00])
@@ -34,10 +46,14 @@ def build() -> bytes:
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
-        print("usage: make_min_rom.py <out path>", file=sys.stderr)
+    if len(sys.argv) not in (2, 3):
+        print("usage: make_min_rom.py <out path> [ram-sensitive]", file=sys.stderr)
         return 2
-    Path(sys.argv[1]).write_bytes(build())
+    ram_sensitive = len(sys.argv) == 3
+    if ram_sensitive and sys.argv[2] != "ram-sensitive":
+        print("usage: make_min_rom.py <out path> [ram-sensitive]", file=sys.stderr)
+        return 2
+    Path(sys.argv[1]).write_bytes(build(RAM_CODE if ram_sensitive else CODE))
     return 0
 
 
