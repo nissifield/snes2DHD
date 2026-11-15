@@ -1,0 +1,78 @@
+name: Linux CI
+
+on:
+  push:
+    branches: [main, m1-linux-integration]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: linux-ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-build:
+    name: linux-build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    container:
+      # Digest pin: the tag would drift under us.
+      image: registry.fedoraproject.org/fedora:44@sha256:8d2d82ab11e614324c42bc1e17322ea7829a8f48faea97645d2fa80d5f56f658
+    defaults:
+      run:
+        shell: bash -euo pipefail {0}
+    steps:
+      # git is needed before checkout; the host gets no installs.
+      - name: Install build dependencies
+        run: dnf -y --setopt=install_weak_deps=False install gcc-c++ cmake ninja-build SDL3-devel python3 git
+
+      - name: Show toolchain and licence labels
+        run: |
+          gcc --version | head -1
+          cmake --version | head -1
+          python3 --version
+          rpm -q SDL3-devel gcc-c++
+          rpm -q --qf '%{NAME} %{LICENSE}\n' SDL3-devel gcc-c++
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configure
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build -j2
+
+      # Only pinned, licensed homebrew ROMs; no game data.
+      - name: Fetch test ROMs
+        run: python3 -I tools/roms/fetch_test_roms.py --dest build/test-roms
+
+      - name: Check CTest registration
+        run: |
+          ctest --test-dir build --show-only=json-v1 > build/ctest.json
+          python3 -I - build/ctest.json <<'PY'
+          import json, sys
+          required = {"headless_min_rom", "headless_reload", "make_min_rom", "frontend_smoke", "frame_hashes"}
+          names = {test["name"] for test in json.load(open(sys.argv[1]))["tests"]}
+          missing = sorted(required - names)
+          if missing:
+              sys.exit(f"missing CTest targets: {missing}")
+          print(f"{len(names)} CTest targets registered")
+          PY
+
+      - name: Run CTests
+        run: ctest --test-dir build --output-on-failure
+
+      # Explicit dirs: the test dirs are namespaces, so no -t .
+      - name: Run Python test suites
+        run: |
+          for suite in tests/tools tests/ci tests/review; do
+            echo "== $suite"
+            python3 -I -m unittest discover -s "$suite" -p 'test_*.py'
+          done
