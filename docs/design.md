@@ -100,7 +100,7 @@ Two agents and plain automation. Nothing becomes an agent if a GitHub feature or
 | **Reviewer** | agent | core members' machines | Reviews each PR **against its card**: scope, ponytail rules, tests, licence/provenance |
 | Merge gate | GitHub-native | GitHub | Branch protection, native auto-merge, CODEOWNERS |
 | Claim bot | small GitHub Action (no PR code, no secrets) | GitHub | `/claim` assigns a card; stale claims expire |
-| Nightly | GitHub Action | GitHub | Builds Linux, publishes a rolling `nightly` prerelease; Windows is backlog |
+| Nightly | GitHub Action | GitHub | Builds Linux, publishes an immutable per-commit `nightly-<sha12>` prerelease with source tarball and `SHA256SUMS`; Windows is backlog |
 | Notifier | cron script | a core member's machine | Polls GitHub and relays to the core team's private chat |
 
 - **Core members** each run the PM/Reviewer with their own model quota. *Planned once there are several core members:* work is split by GitHub assignment so two reviewers never duplicate.

@@ -4,7 +4,9 @@
 
 An open-source SNES emulator being built to present unmodified games in an HD-2D style.
 
-**Pre-alpha — M0 (repo & agent team). Nothing playable yet.**
+**Pre-alpha — M1 (It plays) in progress. Nothing playable yet.**
+
+Built so far: the vendored ares SNES core, a headless test harness with frame-hash tests on licensed homebrew ROMs, an SDL3 window showing stock 2D frames, and Linux packaging with technical-preview builds. Still missing for M1: input, audio, save states and the tap/FrameState capture. There is no HD-2D renderer yet.
 
 The banner is original concept art, not emulator output.
 
@@ -16,9 +18,11 @@ Our first showcase targets are **Terranigma (PAL/EU)** and **Chrono Trigger (US)
 
 ## Play
 
-Bring your own legally obtained ROM. Starting in **M1**, Linux builds will be available from the repository's rolling [nightly release](https://github.com/nissifield/snes2DHD/releases/tag/nightly). There are no playable downloads at M0.
+Bring your own legally obtained ROM. Linux technical previews are on the [releases page](https://github.com/nissifield/snes2DHD/releases). Each preview is a prerelease named `nightly-<sha12>` after the commit it was built from, and contains a Linux binary tarball, the matching source tarball and `SHA256SUMS`.
 
-When builds arrive, follow the [playtesting guide](./docs/playtesting.md) to compare profile output with stock 2D and report problems.
+Technical previews are not playable: there is no input, audio or save-state support yet. The Linux binary needs a recent glibc (Fedora 44 era) and SDL3 from your distribution; it is not a portable build. There are no Windows builds.
+
+When playable builds arrive, follow the [playtesting guide](./docs/playtesting.md) to compare profile output with stock 2D and report problems.
 
 ## Contribute in 2 minutes
 
@@ -48,7 +52,7 @@ Real-game FrameState dumps stay local. Repository test fixtures will use synthet
 | Milestone | Planned outcome |
 | --- | --- |
 | M0 — Repo & agent team | Contribution docs, task cards, review and CI setup |
-| M1 — It plays | ares core, stock 2D frontend, Linux nightlies |
+| M1 — It plays | ares core, stock 2D frontend, Linux technical previews |
 | M2 — Flat HD-2D | Planes, billboards, lighting and post effects |
 | M3 — Showcase profiles v1 | Terranigma and Chrono Trigger opening areas; comparison shots |
 | M4 — Voxel mode | Voxel geometry mixed with flat elements |
@@ -60,7 +64,7 @@ See [ROADMAP.md](./ROADMAP.md) for milestone outcomes and [docs/design.md](./doc
 
 Project-original code is **AGPL-3.0-or-later**; profiles and project-original assets are **CC BY-SA 4.0**. See [NOTICE](./NOTICE) for the licence map and third-party notices.
 
-- **ares — ISC:** the planned SNES emulation core.
+- **ares — ISC:** the SNES emulation core, vendored at a pinned commit.
 - **ponytail — MIT:** the project's minimal-code contribution rules.
 - **Inspiration:** 3dSen by Geod Studio and Octopath Traveler's HD-2D look.
 
