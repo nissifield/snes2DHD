@@ -10,11 +10,13 @@ Milestones come from the [design](docs/design.md), §9. Each one is done when al
 - The claim bot (`/claim`, 7-day expiry) and the core-team notifier are running.
 
 ## M1 — It plays
+Status: in progress. The vendored core, headless harness, stock-frame SDL3 display and Linux technical previews exist; input, audio, save states and the tap/FrameState capture do not yet.
+
 - The ares SNES core is vendored at a pinned commit. The tap is a small patch set in `patches/ares/`.
 - The tap adapter emits FrameState as plain, serialisable data.
 - The SDL3 frontend plays a ROM in plain 2D with audio, input and save states.
 - A headless test harness checks frame hashes on open-licensed homebrew ROMs in CI.
-- Linux nightlies are published as the rolling `nightly` prerelease.
+- Linux technical previews are published as immutable per-commit prereleases named `nightly-<sha12>`, each with a binary tarball, the matching source tarball and `SHA256SUMS`.
 - Windows support (card M1-06) is deferred to backlog, not an M1 completion or Linux release gate. Revisit only when the maintainer brings Windows back into scope.
 
 ## M2 — Flat HD-2D
