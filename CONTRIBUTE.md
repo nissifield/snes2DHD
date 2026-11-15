@@ -8,6 +8,8 @@ Use any AI tool you already have. Start with one small task card:
 
 - [x] I have the right to submit this under the project's licences and it contains no ROM data or copied code.
 
+Reusing licence-compatible code is fine and doesn't count as "copied code" if you follow [AGENTS.md §4](./AGENTS.md#4-licences).
+
 **Universal starter prompt**
 
 ```text

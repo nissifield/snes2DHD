@@ -28,14 +28,22 @@ Use the first option that fully works:
 ## 3. Never
 - ROM data, or any data dumped from a game (including FrameState dumps from real games).
 - Redrawn or traced game art.
-- Code or data copied from Super ZSNES or from any licence-incompatible project.
+- Code or data from Super ZSNES, or from any unlicensed or licence-incompatible source.
 
 - Binary (non-text) files — images included — never auto-merge; they wait for a core member. `.jpg`, `.jpeg` and `.webp` are rejected; use PNG or SVG.
 
 Tile-graphics hashes and WRAM addresses in profiles are allowed.
 
 ## 4. Licences
-Code is **MPL-2.0**. Profiles and assets are **CC BY-SA 4.0**. Submit only work you have the right to license this way.
+Project-original code is **AGPL-3.0-or-later** (GNU Affero General Public License v3 or any later version). Profiles and assets are **CC BY-SA 4.0**. Third-party code keeps its own licence (see `NOTICE`). Submit only work you have the right to license this way.
+
+Reuse suitable existing code instead of rewriting it, if all of this holds:
+- Before reading or copying it, check the licence of that exact source and version.
+- That licence is compatible with AGPL-3.0-or-later for how the code is combined. Check every source and version on its own: choosing the AGPL does not make every GPL-family licence compatible.
+- Keep its copyright notices and licence text, and don't claim it as your own.
+- List its source URL, version or commit and licence in the PR body.
+
+Unlicensed or incompatible code is never allowed. In the rights line below, "copied code" means code copied without meeting these rules.
 
 ## 5. Handing back your work
 
