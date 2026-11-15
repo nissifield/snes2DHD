@@ -1,14 +1,253 @@
 name: nightly
 
 on:
-  workflow_dispatch:
   schedule:
     - cron: '23 4 * * *'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish an immutable preview for this main commit
+        type: boolean
+        default: false
+  pull_request:
+    paths:
+      - .github/workflows/nightly.yml
+      - docs/cards-draft/M1-05.md
 
 permissions: {}
 
+concurrency:
+  # One run per source commit; a run that may publish is never cancelled.
+  group: nightly-${{ github.sha }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
 jobs:
-  placeholder:
+  lint:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - run: echo "no build until M1"
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Pinned official release; the runner gets the binary and nothing else.
+      - name: Run pinned actionlint
+        env:
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/actionlint.tar.gz" \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          echo "$ACTIONLINT_SHA256  $RUNNER_TEMP/actionlint.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
+          rm -f "$RUNNER_TEMP/actionlint.tar.gz"
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            echo "shellcheck not installed; actionlint shell checks skipped (optional)"
+          fi
+          "$RUNNER_TEMP/actionlint" .github/workflows/nightly.yml
+
+  build:
+    needs: lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    container:
+      # Digest pin: the tag would drift under us.
+      image: registry.fedoraproject.org/fedora:44@sha256:8d2d82ab11e614324c42bc1e17322ea7829a8f48faea97645d2fa80d5f56f658
+    steps:
+      # git is needed before checkout; the host gets no installs.
+      - name: Install build dependencies
+        run: dnf -y --setopt=install_weak_deps=False install gcc-c++ cmake ninja-build SDL3-devel python3 git
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configure and build
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j2
+
+      # Only pinned, licensed homebrew ROMs; no game data.
+      - name: Fetch test ROMs
+        run: python3 -I tools/roms/fetch_test_roms.py --dest build/test-roms
+
+      - name: Check registration and run CTests
+        run: |
+          ctest --test-dir build --show-only=json-v1 > build/ctest.json
+          python3 -I - build/ctest.json <<'PY'
+          import json, sys
+          required = {"headless_min_rom", "headless_reload", "make_min_rom", "frontend_smoke", "frame_hashes"}
+          names = {test["name"] for test in json.load(open(sys.argv[1]))["tests"]}
+          missing = sorted(required - names)
+          if missing:
+              sys.exit(f"missing CTest targets: {missing}")
+          print(f"{len(names)} CTest targets registered")
+          PY
+          ctest --test-dir build --output-on-failure
+
+      # Explicit dirs: the test dirs are namespaces, so no -t .
+      - name: Run Python test suites
+        run: |
+          for suite in tests/tools tests/ci tests/review; do
+            echo "== $suite"
+            python3 -I -m unittest discover -s "$suite" -p 'test_*.py'
+          done
+
+      - name: Create distribution files
+        run: |
+          python3 -I tools/nightly/package.py build/dist/snes2dhd-linux-x86_64.tar.gz build/snes2dhd build/snes2dhd-headless
+          # Container workspace ownership differs from this uid; keep it CI-local.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git archive --format=tar.gz --prefix=snes2dhd-source/ \
+            -o build/dist/snes2dhd-source.tar.gz "$GITHUB_SHA"
+          sha256sum build/dist/snes2dhd-linux-x86_64.tar.gz build/dist/snes2dhd-source.tar.gz \
+            | sed 's#  build/dist/#  #' > build/dist/SHA256SUMS
+          (cd build/dist || exit 1; sha256sum -c SHA256SUMS)
+
+      - name: Validate distribution files
+        run: |
+          python3 -I - build/dist/snes2dhd-linux-x86_64.tar.gz build/dist/snes2dhd-source.tar.gz <<'PY'
+          import sys, tarfile
+          expected = {"snes2dhd/snes2dhd", "snes2dhd/snes2dhd-headless",
+                      "snes2dhd/LICENSE", "snes2dhd/NOTICE", "snes2dhd/licenses/ares-LICENSE"}
+          with tarfile.open(sys.argv[1]) as archive:
+              entries = archive.getmembers()
+          members = {m.name: m for m in entries}
+          if len(entries) != 5 or set(members) != expected:
+              sys.exit(f"binary archive: {len(entries)} entries, unexpected={sorted(set(members) ^ expected)}")
+          bins = ("snes2dhd/snes2dhd", "snes2dhd/snes2dhd-headless")
+          if not all(members[n].isfile() and members[n].mode & 0o111 for n in bins):
+              sys.exit("binary archive executables are not executable regular files")
+          texts = ("snes2dhd/LICENSE", "snes2dhd/NOTICE", "snes2dhd/licenses/ares-LICENSE")
+          if not all(members[n].isfile() and members[n].size for n in texts):
+              sys.exit("binary archive licence members are missing or empty")
+          required = {"snes2dhd-source/LICENSE", "snes2dhd-source/NOTICE",
+                      "snes2dhd-source/CMakeLists.txt", "snes2dhd-source/external/ares/LICENSE"}
+          bad_parts = ("/build/", "framestate-dumps/", "__pycache__/")
+          suffixes = (".sfc", ".smc", ".fig", ".swc", ".bs", ".srm", ".state")
+          with tarfile.open(sys.argv[2]) as archive:
+              names = {m.name for m in archive.getmembers()}
+          missing = sorted(required - names)
+          forbidden = sorted(n for n in names if any(p in n for p in bad_parts) or n.lower().endswith(suffixes))
+          if missing or forbidden:
+              sys.exit(f"source archive problems: missing={missing} forbidden={forbidden}")
+          print(f"archives OK: 5 binary members; source has {len(names)} entries and no ROM/build data")
+          PY
+
+      - name: Upload preview artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: snes2dhd-linux-preview
+          path: |
+            build/dist/snes2dhd-linux-x86_64.tar.gz
+            build/dist/snes2dhd-source.tar.gz
+            build/dist/SHA256SUMS
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    # Build-only PRs, forks and non-main refs never reach contents: write.
+    if: >-
+      github.repository == 'nissifield/snes2DHD' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish == true))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download preview artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: snes2dhd-linux-preview
+          path: dist
+
+      - name: Verify downloaded artifact
+        run: |
+          expected=$'SHA256SUMS\nsnes2dhd-linux-x86_64.tar.gz\nsnes2dhd-source.tar.gz'
+          actual=$(find dist -type f -printf '%P\n' | sort)
+          if [ "$actual" != "$expected" ]; then
+            echo "unexpected artifact files:" >&2
+            printf '%s\n' "$actual" >&2
+            exit 1
+          fi
+          if [ -n "$(find dist -mindepth 1 ! -type f -print -quit)" ]; then
+            echo "artifact contains non-regular entries" >&2
+            exit 1
+          fi
+          # --strict plus the name check: a malformed or short SHA256SUMS would
+          # otherwise skip an archive silently.
+          cmp -s <(awk '{print $2}' dist/SHA256SUMS | sort) \
+            <(printf '%s\n' snes2dhd-linux-x86_64.tar.gz snes2dhd-source.tar.gz) \
+            || { echo "SHA256SUMS does not cover exactly both archives" >&2; exit 1; }
+          (cd dist || exit 1; sha256sum -c --strict SHA256SUMS)
+
+      - name: Publish immutable prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag="nightly-${GITHUB_SHA:0:12}"
+          notes="$RUNNER_TEMP/notes.md"
+          cat > "$notes" <<EOF
+          Technical preview of commit $GITHUB_SHA.
+
+          Build-only preview, not a completed playable M1: input, audio, saves and HD-2D are unfinished.
+
+          The Linux binary needs a Fedora 44-era glibc and a system SDL3; not portable.
+
+          Exact source: the snes2dhd-source.tar.gz asset below (git archive of the full commit),
+          https://github.com/$GH_REPO/archive/$GITHUB_SHA.tar.gz and https://github.com/$GH_REPO/tree/$GITHUB_SHA.
+
+          All previews: https://github.com/$GH_REPO/releases (not the latest link).
+          EOF
+
+          release_url="repos/$GH_REPO/releases/tags/$tag"
+          if gh api "$release_url" > /dev/null 2> "$RUNNER_TEMP/release.err"; then
+            target=$(gh api "repos/$GH_REPO/commits/$tag" --jq .sha)
+            assets=$(gh api "$release_url" --jq '.assets[].name' | sort)
+            expected=$'SHA256SUMS\nsnes2dhd-linux-x86_64.tar.gz\nsnes2dhd-source.tar.gz'
+            if [ "$target" != "$GITHUB_SHA" ] || [ "$assets" != "$expected" ]; then
+              echo "release $tag does not match this commit and assets; refusing to change it" >&2
+              exit 1
+            fi
+            echo "release $tag already exists for $GITHUB_SHA; skipping"
+            exit 0
+          fi
+
+          # Only an explicit 404 means missing; auth and transport errors fail.
+          if ! grep -q 'HTTP 404' "$RUNNER_TEMP/release.err"; then
+            cat "$RUNNER_TEMP/release.err" >&2
+            echo "could not query release $tag" >&2
+            exit 1
+          fi
+
+          set +e
+          tag_target=$(gh api "repos/$GH_REPO/commits/$tag" --jq .sha 2> "$RUNNER_TEMP/tag.err")
+          tag_status=$?
+          set -e
+          if [ "$tag_status" -eq 0 ]; then
+            if [ "$tag_target" != "$GITHUB_SHA" ]; then
+              echo "tag $tag points at $tag_target, not $GITHUB_SHA" >&2
+              exit 1
+            fi
+            gh release create "$tag" \
+              dist/SHA256SUMS dist/snes2dhd-linux-x86_64.tar.gz dist/snes2dhd-source.tar.gz \
+              --verify-tag --prerelease --title "$tag" --notes-file "$notes"
+          else
+            if ! grep -q 'HTTP 404' "$RUNNER_TEMP/tag.err"; then
+              cat "$RUNNER_TEMP/tag.err" >&2
+              echo "could not query tag $tag" >&2
+              exit 1
+            fi
+            gh release create "$tag" \
+              dist/SHA256SUMS dist/snes2dhd-linux-x86_64.tar.gz dist/snes2dhd-source.tar.gz \
+              --prerelease --target "$GITHUB_SHA" --title "$tag" --notes-file "$notes"
+          fi
