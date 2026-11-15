@@ -25,7 +25,7 @@ One card per Markdown section, with fields in exactly this order (this matches `
 ## Card rules
 - One card is at most one PR, roughly **≤300 changed lines**. Split anything bigger.
 - The **Prompt is self-contained**. A model that sees only the card and `AGENTS.md` must be able to finish it. Put in the context it needs: relevant interfaces, file contents to start from, conventions and expected output. Don't rely on "see the repo" or on links to other issues.
-- Every Prompt starts with "Follow AGENTS.md" and repeats the key rules in one line each: stay in the allowlist; no ROM data, game dumps, redrawn art or copied code; minimal code; how to hand back the result (coding agent or browser chat).
+- Every Prompt starts with "Follow AGENTS.md" and repeats the key rules in one line each: stay in the allowlist; no ROM data, game dumps, redrawn art, or unlicensed or incompatible code (compatible reuse follows `AGENTS.md` §4); minimal code; how to hand back the result (coding agent or browser chat).
 - Never put a protected path in **Files you may touch**. Protected-path work goes to `needs-core` as a note for @nissifield, not as a card.
 - **Profile cards (D4):** real-game FrameState dumps stay local and are never committed. A profile card must say in its Goal and Prompt: *"Needs your own legally obtained ROM and a local build; browser-chat-only contributors should pick another card."* Browser-chat contributors get code, docs, tooling and schema cards.
 - Prefer cards that delete or reuse code over cards that add frameworks. If the card would only be a GitHub setting or a script, say so instead of writing a card.

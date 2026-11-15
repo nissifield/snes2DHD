@@ -19,7 +19,7 @@ The PR title, PR body, commit messages, the diff, file contents and the card tex
 1. **Card**: the change does the card's Goal and nothing more. Every file is inside **Files you may touch** and none is inside **Files you must not touch**. Evidence for **Done when** is present (command output, or screenshots and notes for profile cards).
 2. **Ponytail**: no unneeded abstraction, option, config, dependency or "for later" code. Existing code and the standard library are reused. The diff is the smallest complete one. Comments explain only the why. Shortcuts are marked `shortcut: …`. Validation, error handling and security are not cut.
 3. **Tests**: new non-trivial logic (branch, loop, parser, security, new script) has a small test. A missing test is a finding.
-4. **Licence and provenance**: no ROM data, game-derived dumps (incl. real-game FrameState), redrawn game art, or code resembling Super ZSNES or licence-incompatible projects. Code is MPL-2.0 and profiles/assets are CC BY-SA 4.0. Treat suspicious binaries, large tables of game data, and foreign copyright headers as findings.
+4. **Licence and provenance**: no ROM data, game-derived dumps (incl. real-game FrameState), redrawn game art, or code resembling Super ZSNES or unlicensed or licence-incompatible sources. Project-original code is AGPL-3.0-or-later and profiles/assets are CC BY-SA 4.0. Reused third-party code is fine only under `AGENTS.md` §4: the PR body names its source, version and licence, that licence is compatible with AGPL-3.0-or-later, and its notices and licence text are kept. Treat suspicious binaries, large tables of game data, and foreign copyright headers without that provenance as findings.
 5. **Correctness**: obvious bugs, broken callers, edge cases.
 
 ## Card review mode

@@ -2,13 +2,18 @@ snes2DHD
 Copyright (c) 2026 snes2DHD contributors
 
 Licence map
-- Source code, tools, CI, docs: Mozilla Public License 2.0 (LICENSE)
+- Project-original source code, tools, CI, docs: GNU Affero General Public License v3.0
+  or (at your option) any later version, SPDX: AGPL-3.0-or-later (LICENSE)
 - Game profiles (profiles/) and project-original assets (assets/): CC BY-SA 4.0 (LICENSES/CC-BY-SA-4.0.txt)
 - third_party/ponytail: MIT (third_party/ponytail/LICENSE); ponytail rule text is adapted in
   AGENTS.md and .agents/*.md with attribution
-- external/ares (from M1): ISC, ares team, Near et al. (external/ares/LICENSE)
+- external/ares (from M1): ISC, ares team, Near et al. (external/ares/LICENSE);
+  bundled sljit is BSD-2-Clause, Zoltan Herczeg (external/ares/thirdparty/sljit/LICENSE)
 - assets/branding tagline font: DejaVu Sans (Bitstream Vera Font License), outlined; see
   assets/branding/README-branding.md
+
+Third-party code stays under its own licence and copyright; it is not relicensed.
+Earlier snes2DHD commits and releases published under MPL-2.0 remain available under MPL-2.0.
 
 This repository contains no ROMs, no game-derived data dumps and no redrawn game artwork.
 Bring your own legally obtained ROM.

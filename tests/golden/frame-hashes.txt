@@ -1,0 +1,2 @@
+16-Bit-Hell.sfc ed79ccceeffc22dda690a1c3cf465a73c2020cfa72b35277e9ab88aaf7e0dadc
+coindash.sfc fd24113ac0bac92313dde67d1d2bd83bb76b388a3869c5f4c5b40868bbe05eb7

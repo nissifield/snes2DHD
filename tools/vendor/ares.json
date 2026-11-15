@@ -1,0 +1,5 @@
+{
+  "repo": "https://github.com/ares-emulator/ares.git",
+  "commit": "0aafd85789215e84e1e43415c07d4c88461b7899",
+  "paths": ["LICENSE", "ares/ares", "ares/component", "ares/sfc", "nall", "libco", "thirdparty/sljit/sljit_src", "thirdparty/sljit/LICENSE", "thirdparty/sljit.h", "thirdparty/sljitConfigPre.h", "thirdparty/sljitConfigPost.h"]
+}
