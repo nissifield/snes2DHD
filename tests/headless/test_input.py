@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from make_min_rom import build
+from make_min_rom import JOYPAD_CODE, build
 
 TIMEOUT = 120
 
@@ -21,6 +21,19 @@ COLOUR_CODE = bytearray([
     0xA9, 0x0F, 0x8D, 0x00, 0x21,
     0x80, 0xFE,
 ])
+
+
+def backdrop_clear_errors() -> list[str]:
+    """The two clears after STZ $2121 must target CGRAM data $2122, not $2222."""
+    address = JOYPAD_CODE.find(bytes([0x9C, 0x21, 0x21]))
+    if address < 0:
+        return ["joypad program has no STZ $2121 (CGRAM address 0)"]
+    clears = JOYPAD_CODE[address + 3:address + 9]
+    expected = bytes([0x9C, 0x22, 0x21] * 2)
+    if clears != expected:
+        return [f"initial backdrop clears {clears.hex(' ')} != {expected.hex(' ')}: "
+                "both must target CGRAM data $2122"]
+    return []
 
 
 def reference_colour(mask: int) -> int:
@@ -46,6 +59,12 @@ def main() -> int:
         print("usage: test_input.py <test_input binary>", file=sys.stderr)
         return 2
     binary = Path(sys.argv[1]).resolve()
+
+    errors = backdrop_clear_errors()
+    if errors:
+        for error in errors:
+            print(f"input fixture: {error}", file=sys.stderr)
+        return 1
 
     with tempfile.TemporaryDirectory() as directory:
         temporary = Path(directory)

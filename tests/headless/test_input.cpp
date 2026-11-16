@@ -117,6 +117,8 @@ auto main(int argc, char** argv) -> int {
   }
   const std::string joypad = argv[1];
   const std::string zero_reference = argv[2];
+  Snapshot b_reference;
+  bool have_b_reference = false;
 
   // Every supplied state: the mask is applied to the joypad ROM and the settled
   // frame must equal the constant-colour reference for that mask.
@@ -130,6 +132,10 @@ auto main(int argc, char** argv) -> int {
     }
     const auto actual = candidate(joypad, mask);
     const auto expected = reference(argument.substr(colon + 1));
+    if(mask == snes2dhd::ButtonB) {
+      b_reference = expected;
+      have_b_reference = true;
+    }
     if(compare(argument.substr(0, colon), actual, expected))
       std::printf("input mask %04x ok %ux%u sha256=%s\n", mask, actual.width, actual.height,
                   hash_frame(actual).c_str());
@@ -147,6 +153,38 @@ auto main(int argc, char** argv) -> int {
       snes2dhd::set_buttons(0x0fff);  // unloaded call must be a safe no-op
       if(auto reloaded = loaded_frame(joypad); compare("reload clear", reloaded, reference(zero_reference)))
         std::printf("input reload clear ok\n");
+    }
+  }
+
+  // A live replacement must clear a held mask without an explicit unload.
+  {
+    if(load_rom(joypad)) {
+      snes2dhd::set_buttons(snes2dhd::ButtonB);
+      const auto held = snap(run(SettleFrames));
+      if(!have_b_reference) fail("replacement needs the wrapper's B reference");
+      else if(!same(held, b_reference)) fail("pre-replacement B hold did not match the B reference");
+
+      // No unload(): load() must replace the still-active, B-held ROM.
+      if(auto replaced = loaded_frame(joypad);
+         compare("replace while held", replaced, reference(zero_reference)))
+        std::printf("input replace while held ok\n");
+    }
+  }
+
+  // A failed replacement while active and B-held must leave a clean mask.
+  {
+    if(load_rom(joypad)) {
+      snes2dhd::set_buttons(snes2dhd::ButtonB);
+      const auto held = snap(run(SettleFrames));
+      if(!have_b_reference) fail("replacement needs the wrapper's B reference");
+      else if(!same(held, b_reference)) fail("pre-replacement B hold did not match the B reference");
+
+      auto error = snes2dhd::load("input-test-missing.sfc");
+      if(error.empty()) fail("missing load while held returned success");
+      // No set_buttons(): the failed load itself must leave the mask clear.
+      if(auto recovered = loaded_frame(joypad);
+         compare("recover after failed load while held", recovered, reference(zero_reference)))
+        std::printf("input failed load while held ok\n");
     }
   }
 
