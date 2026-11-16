@@ -8,7 +8,7 @@ An open-source SNES emulator being built to present unmodified games in an HD-2D
 
 **Pre-alpha — M1 (It plays) in progress. Nothing playable yet.**
 
-Built so far: the vendored ares SNES core, a headless test harness with frame-hash tests on licensed homebrew ROMs, an SDL3 window showing stock 2D frames, and Linux packaging with technical-preview builds. Still missing for M1: input, audio, save states and the tap/FrameState capture. There is no HD-2D renderer yet.
+Built so far: the vendored ares SNES core, a headless test harness with frame-hash tests on licensed homebrew ROMs, an SDL3 window showing stock 2D frames, fixed keyboard input for controller 1, and Linux packaging with technical-preview builds. Still missing for M1: audio, save states and the tap/FrameState capture. There is no HD-2D renderer yet.
 
 The banner is original concept art, not emulator output.
 
@@ -22,7 +22,18 @@ Our first showcase targets are **Terranigma (PAL/EU)** and **Chrono Trigger (US)
 
 Bring your own legally obtained ROM. Linux technical previews are on the [releases page](https://github.com/nissifield/snes2DHD/releases). Each preview is a prerelease named `nightly-<sha12>` after the commit it was built from, and contains a Linux binary tarball, the matching source tarball and `SHA256SUMS`.
 
-Technical previews are not playable: there is no input, audio or save-state support yet. The Linux binary needs a recent glibc (Fedora 44 era) and SDL3 from your distribution; it is not a portable build. There are no Windows builds.
+Technical previews are not playable: there is no audio or save-state support yet. The Linux binary needs a recent glibc (Fedora 44 era) and SDL3 from your distribution; it is not a portable build. There are no Windows builds.
+
+Controller 1 is fixed to the keyboard while the window has focus:
+
+| Key | Button |
+| --- | --- |
+| Arrow keys | D-pad |
+| Z / X | B / A |
+| A / S | Y / X |
+| Q / W | L / R |
+| Enter | Start |
+| Right Shift | Select |
 
 When playable builds arrive, follow the [playtesting guide](./docs/playtesting.md) to compare profile output with stock 2D and report problems.
 

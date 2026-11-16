@@ -8,6 +8,7 @@
 #include <ares/node/node.cpp>
 
 #include <algorithm>
+#include <array>
 #include <condition_variable>
 #include <cstdint>
 #include <fstream>
@@ -48,6 +49,10 @@ struct HeadlessPlatform : ares::Platform {
   bool frame_ready = false;
   std::shared_ptr<nall::vfs::directory> system_pak;
   std::shared_ptr<nall::vfs::directory> cartridge_pak;
+  // Controller 1 buttons in ares Gamepad shift order. The mask is only touched
+  // from the thread that calls load/set_buttons/run_frame/unload.
+  std::array<ares::Node::Input::Button, 12> buttons;
+  std::uint16_t button_mask = 0;
 
   auto pak(ares::Node::Object node) -> std::shared_ptr<nall::vfs::directory> override {
     return node->name() == "Super Famicom" ? system_pak : cartridge_pak;
@@ -73,9 +78,15 @@ struct HeadlessPlatform : ares::Platform {
   }
 
   auto input(ares::Node::Input::Input input) -> void override {
-    if(auto button = std::dynamic_pointer_cast<ares::Core::Input::Button>(input)) {
-      button->setValue(false);
+    auto button = std::dynamic_pointer_cast<ares::Core::Input::Button>(input);
+    if(!button) return;
+    // Drive only the nodes this platform owns; Reset and foreign devices stay false.
+    for(std::size_t bit = 0; bit < buttons.size(); bit++) {
+      if(buttons[bit].get() != button.get()) continue;
+      button->setValue(button_mask & (1u << bit));
+      return;
     }
+    button->setValue(false);
   }
 };
 
@@ -140,6 +151,31 @@ std::string load(const std::string& rom_path) {
     return "ares: failed to connect the cartridge";
   }
 
+  // Fixed controller 1 keyboard input: attach the Gamepad before powering so the
+  // unchanged power sequence sees the final node tree.
+  auto port = root->find<ares::Node::Port>("Controller Port 1");
+  if(!port) {
+    unload();
+    return "ares: no controller port 1";
+  }
+  auto gamepad = port->allocate("Gamepad");
+  if(!gamepad || port->connected().get() != gamepad.get()) {
+    unload();
+    return "ares: failed to connect the gamepad";
+  }
+
+  static constexpr const char* names[] = {
+    "B", "Y", "Select", "Start", "Up", "Down", "Left", "Right", "A", "X", "L", "R",
+  };
+  for(std::size_t bit = 0; bit < instance->buttons.size(); bit++) {
+    auto button = gamepad->find<ares::Node::Input::Button>(names[bit]);
+    if(!button) {
+      unload();
+      return "ares: gamepad is missing a button";
+    }
+    instance->buttons[bit] = button;
+  }
+
   // System::power seeds from the clock and fills chip RAM before a seed can be
   // set, so run its single power pass here from a fixed seed. Calling it twice
   // would leave one unconsumed Thread entry per chip after the first run.
@@ -154,6 +190,11 @@ std::string load(const std::string& rom_path) {
   ares::SuperFamicom::scheduler.power(ares::SuperFamicom::cpu);
 
   return {};
+}
+
+void set_buttons(std::uint16_t buttons) {
+  if(!instance) return;  // nothing loaded: no-op, nothing retained
+  instance->button_mask = buttons & 0x0fff;
 }
 
 const Frame& run_frame() {
