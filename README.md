@@ -4,6 +4,8 @@
 
 An open-source SNES emulator being built to present unmodified games in an HD-2D style.
 
+**Built on [ares](https://github.com/ares-emulator/ares).** snes2DHD uses the ares SNES emulation core, developed by the ares team, Near and other contributors. Our work builds on their emulator rather than reimplementing SNES emulation.
+
 **Pre-alpha — M1 (It plays) in progress. Nothing playable yet.**
 
 Built so far: the vendored ares SNES core, a headless test harness with frame-hash tests on licensed homebrew ROMs, an SDL3 window showing stock 2D frames, and Linux packaging with technical-preview builds. Still missing for M1: input, audio, save states and the tap/FrameState capture. There is no HD-2D renderer yet.
@@ -64,7 +66,7 @@ See [ROADMAP.md](./ROADMAP.md) for milestone outcomes and [docs/design.md](./doc
 
 Project-original code is **AGPL-3.0-or-later**; profiles and project-original assets are **CC BY-SA 4.0**. See [NOTICE](./NOTICE) for the licence map and third-party notices.
 
-- **ares — ISC:** the SNES emulation core, vendored at a pinned commit.
+- **[ares](https://github.com/ares-emulator/ares) — ISC:** the SNES emulation core, developed by the ares team, Near and other contributors, vendored at a pinned commit. Its copyright and licence notices are preserved in [external/ares/LICENSE](./external/ares/LICENSE).
 - **ponytail — MIT:** the project's minimal-code contribution rules.
 - **Inspiration:** 3dSen by Geod Studio and Octopath Traveler's HD-2D look.
 
