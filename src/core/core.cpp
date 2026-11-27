@@ -13,6 +13,8 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <memory>
 #include <mutex>
@@ -58,6 +60,7 @@ struct HeadlessPlatform : ares::Platform {
   // from the thread that calls load/set_buttons/run_frame/unload.
   std::array<ares::Node::Input::Button, 12> buttons;
   std::uint16_t button_mask = 0;
+  std::size_t expected_state_size = 0;
 
   auto pak(ares::Node::Object node) -> std::shared_ptr<nall::vfs::directory> override {
     return node->name() == "Super Famicom" ? system_pak : cartridge_pak;
@@ -112,15 +115,60 @@ ares::Node::System root;
 struct CartridgeInfo {
   Region region = Region::NTSC;
   Mapping mapping = Mapping::LoROM;
+  std::size_t sram_size = 0;
 };
 
 constexpr std::size_t HeaderSize = 0x40;
 constexpr std::size_t LoROMHeaderOffset = 0x7fc0;
 constexpr std::size_t HiROMHeaderOffset = 0xffc0;
 constexpr std::size_t ExHiROMHeaderOffset = 0x40ffc0;
+constexpr std::size_t StateHeaderSize = 4 + 1 + 16 + 512 + 1;
+constexpr const char* StateSerializerVersion = "v146";
 
 auto read_le16(std::span<const u8> data, std::size_t offset) -> std::uint16_t {
   return (std::uint16_t)data[offset] | ((std::uint16_t)data[offset + 1] << 8);
+}
+
+auto read_le32(std::span<const std::uint8_t> data, std::size_t offset) -> std::uint32_t {
+  return (std::uint32_t)data[offset]
+       | ((std::uint32_t)data[offset + 1] << 8)
+       | ((std::uint32_t)data[offset + 2] << 16)
+       | ((std::uint32_t)data[offset + 3] << 24);
+}
+
+auto write_file_atomic(const std::string& path, std::span<const std::uint8_t> bytes) -> std::string {
+  const std::filesystem::path target(path);
+  const std::filesystem::path tmp = path + ".tmp";
+  {
+    std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+    if(!out) return "cannot open temporary file for write: " + tmp.string();
+    if(!bytes.empty()) {
+      out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    }
+    out.flush();
+    if(!out) {
+      std::error_code ec;
+      std::filesystem::remove(tmp, ec);
+      return "failed to write file: " + tmp.string();
+    }
+  }
+  std::error_code ec;
+  std::filesystem::rename(tmp, target, ec);
+  if(ec) {
+    std::error_code rm_ec;
+    std::filesystem::remove(tmp, rm_ec);
+    return "failed to replace file " + path + ": " + ec.message();
+  }
+  return {};
+}
+
+auto detect_sram_size(std::uint8_t cart_type, std::uint8_t ram_size_code) -> std::size_t {
+  if(ram_size_code == 0 || ram_size_code > 8) return 0;
+  const std::uint8_t low = cart_type & 0x0f;
+  if(low == 0x01 || low == 0x02 || low == 0x05 || low == 0x06 || low == 0x09 || low == 0x0a) {
+    return std::size_t{1024} << ram_size_code;
+  }
+  return 0;
 }
 
 auto strip_copier_header(std::span<const u8> rom) -> std::span<const u8> {
@@ -198,16 +246,17 @@ auto detect_cartridge(std::span<const u8> rom) -> CartridgeInfo {
   }
 
   if(!found) return {};
-  return {is_pal_region(rom[best_offset + 0x19]) ? Region::PAL : Region::NTSC, best_mapping};
+  const std::size_t sram_size = detect_sram_size(rom[best_offset + 0x16], rom[best_offset + 0x18]);
+  return {is_pal_region(rom[best_offset + 0x19]) ? Region::PAL : Region::NTSC, best_mapping, sram_size};
 }
 
-auto board_name(Mapping mapping) -> const char* {
+auto board_name(Mapping mapping, bool has_ram) -> const char* {
   switch(mapping) {
-  case Mapping::LoROM: return "LOROM";
-  case Mapping::HiROM: return "HIROM";
-  case Mapping::ExHiROM: return "EXHIROM";
+  case Mapping::LoROM: return has_ram ? "LOROM-RAM" : "LOROM";
+  case Mapping::HiROM: return has_ram ? "HIROM-RAM" : "HIROM";
+  case Mapping::ExHiROM: return has_ram ? "EXHIROM-RAM" : "EXHIROM";
   }
-  return "LOROM";
+  return has_ram ? "LOROM-RAM" : "LOROM";
 }
 
 auto make_system_pak() -> std::shared_ptr<nall::vfs::directory> {
@@ -217,16 +266,35 @@ auto make_system_pak() -> std::shared_ptr<nall::vfs::directory> {
     "board: LOROM\n"
     "  memory type=ROM content=Program\n"
     "    map address=00-7d,80-ff:8000-ffff mask=0x8000\n"
+    "board: LOROM-RAM\n"
+    "  memory type=ROM content=Program\n"
+    "    map address=00-7d,80-ff:8000-ffff mask=0x8000\n"
+    "  memory type=RAM content=Save\n"
+    "    map address=70-7d,f0-ff:0000-7fff mask=0x8000\n"
     "board: HIROM\n"
     "  memory type=ROM content=Program\n"
     "    map address=00-3f,80-bf:8000-ffff\n"
     "    map address=40-7d,c0-ff:0000-ffff\n"
+    "board: HIROM-RAM\n"
+    "  memory type=ROM content=Program\n"
+    "    map address=00-3f,80-bf:8000-ffff\n"
+    "    map address=40-7d,c0-ff:0000-ffff\n"
+    "  memory type=RAM content=Save\n"
+    "    map address=20-3f,a0-bf:6000-7fff mask=0xe000\n"
     "board: EXHIROM\n"
     "  memory type=ROM content=Program\n"
     "    map address=80-bf:8000-ffff size=0x400000\n"
     "    map address=c0-ff:0000-ffff size=0x400000\n"
     "    map address=00-3f:8000-ffff base=0x400000\n"
-    "    map address=40-7d:0000-ffff base=0x400000\n";
+    "    map address=40-7d:0000-ffff base=0x400000\n"
+    "board: EXHIROM-RAM\n"
+    "  memory type=ROM content=Program\n"
+    "    map address=80-bf:8000-ffff size=0x400000\n"
+    "    map address=c0-ff:0000-ffff size=0x400000\n"
+    "    map address=00-3f:8000-ffff base=0x400000\n"
+    "    map address=40-7d:0000-ffff base=0x400000\n"
+    "  memory type=RAM content=Save\n"
+    "    map address=20-3f,a0-bf:6000-7fff mask=0xe000\n";
 
   auto pak = std::make_shared<nall::vfs::directory>();
   pak->append("boards.bml", std::span<const u8>((const u8*)boards, sizeof(boards) - 1));
@@ -237,9 +305,13 @@ auto make_cartridge_pak(std::span<const u8> rom, const CartridgeInfo& info) -> s
   auto pak = std::make_shared<nall::vfs::directory>();
   pak->setAttribute("title", "snes2dhd");
   pak->setAttribute("region", info.region == Region::PAL ? "PAL" : "NTSC");
-  // shortcut: plain ROM mapping (LoROM/HiROM/ExHiROM) only, no coprocessors or save RAM; upgrade when a game needs SRAM or special chips
-  pak->setAttribute("board", board_name(info.mapping));
+  // shortcut: standard LoROM/HiROM/ExHiROM + plain SRAM only, no coprocessors; upgrade when a game needs special chips
+  pak->setAttribute("board", board_name(info.mapping, info.sram_size > 0));
   pak->append("program.rom", rom);
+  if(info.sram_size > 0) {
+    std::vector<u8> initial_ram(info.sram_size, 0xff);
+    pak->append("save.ram", initial_ram);
+  }
   return pak;
 }
 
@@ -352,6 +424,76 @@ const Frame& run_frame() {
 std::span<const std::int16_t> audio_samples() {
   if(!instance) return {};
   return {instance->audio_samples.data(), instance->audio_samples.size()};
+}
+
+std::vector<std::uint8_t> save_state() {
+  if(!root || !instance) return {};
+  auto serialized = root->serialize(true);
+  if(!serialized.data() || serialized.size() == 0) return {};
+  instance->expected_state_size = serialized.size();
+  return {serialized.data(), serialized.data() + serialized.size()};
+}
+
+std::string load_state(std::span<const std::uint8_t> data) {
+  if(!root || !instance) return "cannot load state: no ROM loaded";
+  if(data.size() < StateHeaderSize) return "invalid save state: empty or truncated header";
+
+  // Validate header fields and exact byte length before calling ares's unserializer,
+  // because nall::serializer silently zero-extends reads past the end of a short buffer.
+  if(read_le32(data, 0) != ares::SerializerSignature) {
+    return "invalid save state: bad signature";
+  }
+  // Only accept synchronized states; unsynchronized states embed raw host cothread stacks.
+  if(data[4] != 1) {
+    return "invalid save state: unsynchronized state is not supported";
+  }
+  char version[17] = {};
+  std::memcpy(version, data.data() + 5, 16);
+  if(std::strcmp(version, StateSerializerVersion) != 0) {
+    return "invalid save state: unsupported serializer version";
+  }
+  const bool ppu_accurate = data[533] != 0;
+  if(data[533] > 1 || ppu_accurate != ares::SuperFamicom::ppu.accurate) {
+    return "invalid save state: PPU mode mismatch";
+  }
+
+  if(instance->expected_state_size == 0) {
+    instance->expected_state_size = root->serialize(true).size();
+  }
+  if(data.size() != instance->expected_state_size) {
+    return "invalid save state: unexpected byte size";
+  }
+
+  serializer s(data.data(), static_cast<u32>(data.size()));
+  if(!root->unserialize(s)) {
+    return "invalid save state: ares rejected state buffer";
+  }
+  return {};
+}
+
+bool has_sram() {
+  return instance && root && ares::SuperFamicom::cartridge.ram.size() > 0;
+}
+
+std::string load_sram(const std::string& path) {
+  if(!has_sram()) return "cannot load SRAM: cartridge has no save RAM";
+  std::ifstream in(path, std::ios::binary);
+  if(!in) return "cannot open SRAM file: " + path;
+  std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  if(in.bad()) return "failed to read SRAM file: " + path;
+  if(bytes.empty()) return "empty SRAM file: " + path;
+
+  auto& ram = ares::SuperFamicom::cartridge.ram;
+  const std::size_t count = std::min<std::size_t>(bytes.size(), ram.size());
+  std::memcpy(ram.data(), bytes.data(), count);
+  return {};
+}
+
+std::string save_sram(const std::string& path) {
+  if(!has_sram()) return "cannot save SRAM: cartridge has no save RAM";
+  auto& ram = ares::SuperFamicom::cartridge.ram;
+  const auto bytes = std::span<const std::uint8_t>(reinterpret_cast<const std::uint8_t*>(ram.data()), ram.size());
+  return write_file_atomic(path, bytes);
 }
 
 void unload() {

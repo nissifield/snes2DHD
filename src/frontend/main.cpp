@@ -11,10 +11,16 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <optional>
 #include <span>
+#include <string>
+#include <vector>
 
 namespace {
+
+constexpr std::uintmax_t MaxStateFileBytes = 64ULL * 1024ULL * 1024ULL;
 
 auto usage() -> void {
   std::fputs("usage: snes2dhd [--quit-after N] <rom>\n", stderr);
@@ -22,6 +28,48 @@ auto usage() -> void {
 
 auto sdl_error(const char* call) -> void {
   std::fprintf(stderr, "%s: %s\n", call, SDL_GetError());
+}
+
+auto write_state_atomic(const std::string& path, std::span<const std::uint8_t> bytes) -> std::string {
+  const std::filesystem::path tmp = path + ".tmp";
+  {
+    std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+    if(!out) return "cannot open temporary state file: " + tmp.string();
+    if(!bytes.empty()) {
+      out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    }
+    out.flush();
+    if(!out) {
+      std::error_code ec;
+      std::filesystem::remove(tmp, ec);
+      return "failed to write state file: " + tmp.string();
+    }
+  }
+  std::error_code ec;
+  std::filesystem::rename(tmp, path, ec);
+  if(ec) {
+    std::error_code rm_ec;
+    std::filesystem::remove(tmp, rm_ec);
+    return "failed to replace state file " + path + ": " + ec.message();
+  }
+  return {};
+}
+
+auto read_state_file(const std::string& path, std::vector<std::uint8_t>& out) -> std::string {
+  std::error_code ec;
+  const auto size = std::filesystem::file_size(path, ec);
+  if(ec) return "cannot stat state file " + path + ": " + ec.message();
+  if(size == 0 || size > MaxStateFileBytes) return "state file size out of bounds: " + path;
+
+  std::ifstream in(path, std::ios::binary);
+  if(!in) return "cannot open state file: " + path;
+  out.resize(static_cast<std::size_t>(size));
+  in.read(reinterpret_cast<char*>(out.data()), static_cast<std::streamsize>(size));
+  if(!in || static_cast<std::uintmax_t>(in.gcount()) != size) {
+    out.clear();
+    return "failed to read state file: " + path;
+  }
+  return {};
 }
 
 auto open_first_gamepad() -> SDL_Gamepad* {
@@ -77,13 +125,31 @@ auto main(int argc, char** argv) -> int {
     return 2;
   }
 
-  if(auto error = snes2dhd::load(argv[arg]); !error.empty()) {
+  const std::string rom_path = argv[arg];
+  const std::string state_path = rom_path + ".state";
+  const std::string srm_path = rom_path + ".srm";
+
+  if(auto error = snes2dhd::load(rom_path); !error.empty()) {
     std::fprintf(stderr, "%s\n", error.c_str());
     return 1;
   }
 
+  if(snes2dhd::has_sram()) {
+    std::error_code ec;
+    if(std::filesystem::exists(srm_path, ec)) {
+      if(auto error = snes2dhd::load_sram(srm_path); !error.empty()) {
+        std::fprintf(stderr, "sram load: %s\n", error.c_str());
+      }
+    }
+  }
+
   if(!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
     sdl_error("SDL_Init");
+    if(snes2dhd::has_sram()) {
+      if(auto error = snes2dhd::save_sram(srm_path); !error.empty()) {
+        std::fprintf(stderr, "sram save: %s\n", error.c_str());
+      }
+    }
     snes2dhd::unload();
     return 1;
   }
@@ -96,8 +162,13 @@ auto main(int argc, char** argv) -> int {
   bool audio_inited = false;
   std::uint32_t texture_width = 0, texture_height = 0;
 
-  // One exit path, so every failure still tears down SDL and the core.
+  // One exit path, so every failure still tears down SDL, saves SRAM and unloads the core.
   auto finish = [&](int code) {
+    if(snes2dhd::has_sram()) {
+      if(auto error = snes2dhd::save_sram(srm_path); !error.empty()) {
+        std::fprintf(stderr, "sram save: %s\n", error.c_str());
+      }
+    }
     if(gamepad) SDL_CloseGamepad(gamepad);
     if(audio_stream) SDL_DestroyAudioStream(audio_stream);
     if(audio_inited) SDL_QuitSubSystem(SDL_INIT_AUDIO);
@@ -142,6 +213,22 @@ auto main(int argc, char** argv) -> int {
     while(SDL_PollEvent(&event)) {
       if(event.type == SDL_EVENT_QUIT) {
         quit = true;
+      } else if(event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
+        if(event.key.key == SDLK_F5) {
+          const auto state = snes2dhd::save_state();
+          if(state.empty()) {
+            std::fputs("save state: core returned empty state\n", stderr);
+          } else if(auto error = write_state_atomic(state_path, state); !error.empty()) {
+            std::fprintf(stderr, "save state: %s\n", error.c_str());
+          }
+        } else if(event.key.key == SDLK_F9) {
+          std::vector<std::uint8_t> state;
+          if(auto error = read_state_file(state_path, state); !error.empty()) {
+            std::fprintf(stderr, "load state: %s\n", error.c_str());
+          } else if(auto load_err = snes2dhd::load_state(state); !load_err.empty()) {
+            std::fprintf(stderr, "load state: %s\n", load_err.c_str());
+          }
+        }
       } else if(event.type == SDL_EVENT_GAMEPAD_ADDED && !gamepad) {
         gamepad = SDL_OpenGamepad(event.gdevice.which);
       } else if(event.type == SDL_EVENT_GAMEPAD_REMOVED && gamepad &&
