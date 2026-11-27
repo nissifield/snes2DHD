@@ -58,6 +58,17 @@ const Frame& run_frame();
 // Interleaved stereo 16-bit PCM samples (AudioSampleRate Hz) emitted during the last run_frame().
 std::span<const std::int16_t> audio_samples();
 
+// Serializes the loaded system state deterministically, or returns empty when unloaded.
+std::vector<std::uint8_t> save_state();
+
+// Restores a serialized state into the loaded system. Returns "" on success or an error message.
+std::string load_state(std::span<const std::uint8_t> data);
+
+// Battery SRAM helpers for cartridges with mapped save RAM.
+bool has_sram();
+std::string load_sram(const std::string& path);
+std::string save_sram(const std::string& path);
+
 void unload();
 
 }
