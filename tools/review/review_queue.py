@@ -117,6 +117,9 @@ def _token_gh(token_file: str | Path,
 
 
 def build_prompt(role_md: str, card_body: str, pr_body: str, diff: str) -> str:
+    card_body = card_body.replace("</untrusted-", r"<\/untrusted-")
+    pr_body = pr_body.replace("</untrusted-", r"<\/untrusted-")
+    diff = diff.replace("</untrusted-", r"<\/untrusted-")
     return (
         role_md
         + "\n\n---\n\n"
@@ -204,9 +207,6 @@ def _review_pr(gh: Gh, git: Git, agent: Agent, agent_cmd: list[str],
                author_email: str | None = None) -> None:
     data = json.loads(gh("pr", "view", str(number), "--json",
                          "headRefOid,statusCheckRollup"))
-    if (data.get("author") or {}).get("login") == me:
-        print(f"SKIP own PR #{number}")
-        return
     head = data["headRefOid"]
     if not _checks_green(data.get("statusCheckRollup", [])):
         print(f"PR #{number}: checks not green, skipping")
@@ -332,18 +332,7 @@ def _review_card(gh: Gh, agent: Agent, agent_cmd: list[str], role_md: str,
 def run(agent_cmd: list[str], dry_run: bool = True, gh: Gh | None = None,
         agent: Agent | None = None, cards: bool = False,
         git: Git | None = None, max_diff_lines: int = 300,
-        max_files: int = 10, author_email: str | None = None,
-        token_file: str | Path | None = None) -> int:
-    if token_file is not None and gh is None:
-        try:
-            with _token_gh(token_file) as token_gh:
-                return run(agent_cmd, dry_run=dry_run, gh=token_gh,
-                           agent=agent, cards=cards, git=git,
-                           max_diff_lines=max_diff_lines, max_files=max_files,
-                           author_email=author_email)
-        except ValueError as e:
-            print(str(e), file=sys.stderr)
-            return 2
+        max_files: int = 10, author_email: str | None = None) -> int:
     gh = gh or _gh
     git = git or _git
     agent = agent or _agent
@@ -425,6 +414,9 @@ def main(argv: list[str], gh: Gh | None = None,
                 return 2
             gh_fn = gh or token_gh
         else:
+            if opts.live:
+                print("warning: --live without --token-file uses the "
+                      "interactive gh login", file=sys.stderr)
             gh_fn = gh or _gh
         if not agent_cmd:
             print("usage: review_queue.py [--live] [--cards] "
