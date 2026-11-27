@@ -76,6 +76,9 @@ add_executable(test_keyboard_input tests/frontend/test_keyboard_input.cpp)
 target_include_directories(test_keyboard_input PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(test_keyboard_input PRIVATE SDL3::SDL3)
 
+add_executable(test_gamepad_input tests/frontend/test_gamepad_input.cpp)
+target_include_directories(test_gamepad_input PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
 enable_testing()
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 add_test(NAME headless_min_rom
@@ -92,6 +95,9 @@ add_test(NAME cartridge_mapping
 )
 add_test(NAME keyboard_input
   COMMAND $<TARGET_FILE:test_keyboard_input>
+)
+add_test(NAME gamepad_input
+  COMMAND $<TARGET_FILE:test_gamepad_input>
 )
 add_test(NAME make_min_rom
   COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tests/headless/make_min_rom.py ${CMAKE_BINARY_DIR}/min.sfc

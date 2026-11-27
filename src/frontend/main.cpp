@@ -1,5 +1,6 @@
 #include <core/core.hpp>
 
+#include <frontend/gamepad_input.hpp>
 #include <frontend/keyboard_input.hpp>
 
 #include <SDL3/SDL.h>
@@ -19,6 +20,36 @@ auto usage() -> void {
 
 auto sdl_error(const char* call) -> void {
   std::fprintf(stderr, "%s: %s\n", call, SDL_GetError());
+}
+
+auto open_first_gamepad() -> SDL_Gamepad* {
+  int count = 0;
+  SDL_JoystickID* ids = SDL_GetGamepads(&count);
+  if(!ids) return nullptr;
+  SDL_Gamepad* pad = nullptr;
+  for(int i = 0; i < count && !pad; i++) pad = SDL_OpenGamepad(ids[i]);
+  SDL_free(ids);
+  return pad;
+}
+
+auto read_gamepad(SDL_Gamepad* pad) -> snes2dhd::detail::GamepadSnapshot {
+  snes2dhd::detail::GamepadSnapshot snap{};
+  if(!pad) return snap;
+  snap.south = SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_SOUTH);
+  snap.east = SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_EAST);
+  snap.west = SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_WEST);
+  snap.north = SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_NORTH);
+  snap.dpad_up = SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_UP);
+  snap.dpad_down = SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_DOWN);
+  snap.dpad_left = SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_LEFT);
+  snap.dpad_right = SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT);
+  snap.left_shoulder = SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER);
+  snap.right_shoulder = SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER);
+  snap.start = SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_START);
+  snap.back = SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_BACK);
+  snap.left_x = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTX);
+  snap.left_y = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTY);
+  return snap;
 }
 
 }  // namespace
@@ -49,7 +80,7 @@ auto main(int argc, char** argv) -> int {
     return 1;
   }
 
-  if(!SDL_Init(SDL_INIT_VIDEO)) {
+  if(!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
     sdl_error("SDL_Init");
     snes2dhd::unload();
     return 1;
@@ -59,11 +90,13 @@ auto main(int argc, char** argv) -> int {
   SDL_Renderer* renderer = nullptr;
   SDL_Texture* texture = nullptr;
   SDL_AudioStream* audio_stream = nullptr;
+  SDL_Gamepad* gamepad = open_first_gamepad();
   bool audio_inited = false;
   std::uint32_t texture_width = 0, texture_height = 0;
 
   // One exit path, so every failure still tears down SDL and the core.
   auto finish = [&](int code) {
+    if(gamepad) SDL_CloseGamepad(gamepad);
     if(audio_stream) SDL_DestroyAudioStream(audio_stream);
     if(audio_inited) SDL_QuitSubSystem(SDL_INIT_AUDIO);
     if(texture) SDL_DestroyTexture(texture);
@@ -102,17 +135,27 @@ auto main(int argc, char** argv) -> int {
     SDL_Event event;
     bool quit = false;
     while(SDL_PollEvent(&event)) {
-      if(event.type == SDL_EVENT_QUIT) quit = true;
+      if(event.type == SDL_EVENT_QUIT) {
+        quit = true;
+      } else if(event.type == SDL_EVENT_GAMEPAD_ADDED && !gamepad) {
+        gamepad = SDL_OpenGamepad(event.gdevice.which);
+      } else if(event.type == SDL_EVENT_GAMEPAD_REMOVED && gamepad &&
+                event.gdevice.which == SDL_GetGamepadID(gamepad)) {
+        SDL_CloseGamepad(gamepad);
+        gamepad = open_first_gamepad();
+      }
     }
     if(quit) break;
 
-    // Polling SDL_PollEvent above refreshed the keyboard snapshot. Only a focused
-    // window drives the core, so a key held across a focus change cannot stick.
+    // Polling SDL_PollEvent above refreshed keyboard and gamepad state. Only a
+    // focused window drives the core, so held inputs cannot survive a focus change.
     const bool* keys = SDL_GetKeyboardState(nullptr);
     const bool focused = SDL_GetKeyboardFocus() == window;
     const auto pressed = keys ? std::span<const bool>(keys, SDL_SCANCODE_COUNT)
                               : std::span<const bool>();
-    snes2dhd::set_buttons(snes2dhd::detail::keyboard_buttons(pressed, focused));
+    const auto pad_snapshot = read_gamepad(gamepad);
+    snes2dhd::set_buttons(snes2dhd::detail::keyboard_buttons(pressed, focused) |
+                          snes2dhd::detail::gamepad_buttons(pad_snapshot, focused));
 
     const snes2dhd::Frame& frame = snes2dhd::run_frame();
 
