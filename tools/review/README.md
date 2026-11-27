@@ -19,6 +19,17 @@ core member's machine:
 `--live` to actually post. The agent command comes after `--`; the review
 prompt is piped to it on stdin.
 
+## Hardening flags
+
+- `--token-file PATH`: read `GH_TOKEN` from a regular file with no group/other
+  permission bits (`0600`/`0400`), run `gh` with a fresh empty `GH_CONFIG_DIR`,
+  and pass the agent only the `PATH`/`HOME`/`USER`/`LANG`/`TMPDIR`/`XDG_RUNTIME_DIR`
+  environment allowlist.
+- `--max-diff-lines N` (default `300`) and `--max-files M` (default `10`): hold
+  PRs whose pinned diff exceeds either limit (`HOLD too large #<n>`).
+- `--author-email EMAIL`: pass `--author-email EMAIL` to
+  `gh pr merge --auto --squash`.
+
 ## Examples
 
     python3 tools/review/review_queue.py -- claude -p --permission-mode plan
