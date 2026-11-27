@@ -1,5 +1,7 @@
 #include <core/core.hpp>
 
+#include <frontend/keyboard_input.hpp>
+
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 
@@ -7,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <span>
 
 namespace {
 
@@ -86,6 +89,14 @@ auto main(int argc, char** argv) -> int {
       if(event.type == SDL_EVENT_QUIT) quit = true;
     }
     if(quit) break;
+
+    // Polling SDL_PollEvent above refreshed the keyboard snapshot. Only a focused
+    // window drives the core, so a key held across a focus change cannot stick.
+    const bool* keys = SDL_GetKeyboardState(nullptr);
+    const bool focused = SDL_GetKeyboardFocus() == window;
+    const auto pressed = keys ? std::span<const bool>(keys, SDL_SCANCODE_COUNT)
+                              : std::span<const bool>();
+    snes2dhd::set_buttons(snes2dhd::detail::keyboard_buttons(pressed, focused));
 
     const snes2dhd::Frame& frame = snes2dhd::run_frame();
 
