@@ -1,5 +1,6 @@
 #include <core/core.hpp>
 
+#include <frontend/frame_pacer.hpp>
 #include <frontend/gamepad_input.hpp>
 #include <frontend/keyboard_input.hpp>
 
@@ -10,6 +11,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <optional>
 #include <span>
 
 namespace {
@@ -112,11 +114,9 @@ auto main(int argc, char** argv) -> int {
     return finish(1);
   }
 
-  // shortcut: paced by vsync, wrong speed on non-60 Hz displays; upgrade to audio-driven pacing when audio lands
-  if(!SDL_SetRenderVSync(renderer, 1)) {
-    sdl_error("SDL_SetRenderVSync");
-    return finish(1);
-  }
+  // Pacing is driven by audio queue + region frame interval, so keep vsync off
+  // on high-refresh or PAL displays when the backend allows it.
+  (void)SDL_SetRenderVSync(renderer, 0);
 
   // Audio playback is best-effort so headless/offscreen runs without an audio device still succeed.
   if(SDL_InitSubSystem(SDL_INIT_AUDIO)) {
@@ -129,6 +129,11 @@ auto main(int argc, char** argv) -> int {
       audio_stream = nullptr;
     }
   }
+
+  const snes2dhd::Region active_region = snes2dhd::region();
+  std::uint64_t next_deadline_ns = quit_after == 0
+      ? SDL_GetTicksNS() + snes2dhd::detail::frame_interval_ns(active_region)
+      : 0ULL;
 
   long frames = 0;
   for(;;) {
@@ -209,7 +214,19 @@ auto main(int argc, char** argv) -> int {
       return finish(1);
     }
 
-    if(quit_after && ++frames >= quit_after) break;
+    if(quit_after) {
+      if(++frames >= quit_after) break;
+    } else {
+      const std::uint64_t now_ns = SDL_GetTicksNS();
+      const std::optional<int> queued = audio_stream
+          ? std::optional<int>(SDL_GetAudioStreamQueued(audio_stream))
+          : std::nullopt;
+      const std::uint64_t wait_ns = snes2dhd::detail::compute_wait_ns(
+          active_region, now_ns, next_deadline_ns, queued, snes2dhd::AudioSampleRate);
+      if(wait_ns > 0) SDL_DelayNS(wait_ns);
+      const std::uint64_t after_ns = wait_ns > 0 ? SDL_GetTicksNS() : now_ns;
+      next_deadline_ns = snes2dhd::detail::advance_deadline_ns(active_region, after_ns, next_deadline_ns);
+    }
   }
 
   return finish(0);
