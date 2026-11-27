@@ -1,10 +1,10 @@
 # Playtesting
 
-**Nothing is playable at M0.** Nightly builds start in M1; profile comparisons become useful when profiles arrive in M3. These steps describe that planned workflow.
+**M1 technical preview — not yet playable.** Available now on Linux: a stock 2D SDL3 window (`snes2dhd`), fixed keyboard input for Controller 1, and the headless test runner (`snes2dhd-headless`). Audio, save states, tap/FrameState capture and HD-2D profiles are not implemented yet; profile comparisons become useful when profiles arrive in M3. The steps below describe that planned workflow.
 
-## Get the nightly
+## Get the technical preview
 
-Download the build for your system from the rolling [nightly release](https://github.com/nissifield/snes2DHD/releases/tag/nightly), available from M1. Bring your own legally obtained ROM.
+Download the latest Linux technical preview from the [releases page](https://github.com/nissifield/snes2DHD/releases). Each preview is an immutable prerelease named `nightly-<sha12>` after the commit it was built from, containing a Linux binary tarball (`snes2dhd-linux-x86_64.tar.gz`, requiring a Fedora 44-era glibc and system SDL3), the matching source tarball and `SHA256SUMS`. There are no Windows builds. Bring your own legally obtained ROM.
 
 ## Check your ROM revision
 

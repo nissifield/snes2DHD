@@ -10,7 +10,7 @@ Milestones come from the [design](docs/design.md), §9. Each one is done when al
 - The claim bot (`/claim`, 7-day expiry) and the core-team notifier are running.
 
 ## M1 — It plays
-Status: in progress. The vendored core, headless harness, stock-frame SDL3 display and Linux technical previews exist; input, audio, save states and the tap/FrameState capture do not yet.
+Status: in progress. The vendored core, headless harness, stock-frame SDL3 display, Controller 1 fixed keyboard input and Linux technical previews exist; audio, save states and the tap/FrameState capture do not yet.
 
 - The ares SNES core is vendored at a pinned commit. The tap is a small patch set in `patches/ares/`.
 - The tap adapter emits FrameState as plain, serialisable data.
