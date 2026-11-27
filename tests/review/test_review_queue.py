@@ -12,6 +12,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools" / "ci"))
@@ -424,6 +425,327 @@ class CommitCheckTest(unittest.TestCase):
             git, "h", [("A", "profiles/x/A.json", None),
                        ("A", "profiles/x/a.json", None)])
         self.assertIn("path collision: profiles/x/a.json", errors)
+
+
+class TokenFileTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+
+    def _run_main(self, argv):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc = review_queue.main(argv)
+        return rc, err.getvalue()
+
+    def test_token_file_missing_rejected(self):
+        missing = self.tmp / "missing.tok"
+        with mock.patch.object(review_queue.subprocess, "run") as mrun:
+            rc, err = self._run_main(
+                ["--token-file", str(missing), "--", "echo"])
+        self.assertEqual(rc, 2)
+        self.assertIn("missing", err)
+        self.assertEqual(mrun.call_count, 0)
+
+    def test_token_file_empty_rejected(self):
+        tok = self.tmp / "empty.tok"
+        tok.write_text("  \n", encoding="utf-8")
+        os.chmod(tok, 0o600)
+        with mock.patch.object(review_queue.subprocess, "run") as mrun:
+            rc, err = self._run_main(["--token-file", str(tok), "--", "echo"])
+        self.assertEqual(rc, 2)
+        self.assertIn("empty", err)
+        self.assertEqual(mrun.call_count, 0)
+
+    def test_token_file_not_regular_rejected(self):
+        d = self.tmp / "dir.tok"
+        d.mkdir(mode=0o700)
+        rc, err = self._run_main(["--token-file", str(d), "--", "echo"])
+        self.assertEqual(rc, 2)
+        self.assertIn("not a regular file", err)
+
+        real = self.tmp / "real.tok"
+        real.write_text("secret-token\n", encoding="utf-8")
+        os.chmod(real, 0o600)
+        link = self.tmp / "link.tok"
+        link.symlink_to(real)
+        rc, err = self._run_main(["--token-file", str(link), "--", "echo"])
+        self.assertEqual(rc, 2)
+        self.assertIn("not a regular file", err)
+
+    def test_token_file_permissions_rejected(self):
+        tok = self.tmp / "perm.tok"
+        tok.write_text("secret-token\n", encoding="utf-8")
+        for mode in (0o644, 0o640, 0o604):
+            os.chmod(tok, mode)
+            rc, err = self._run_main(["--token-file", str(tok), "--", "echo"])
+            self.assertEqual(rc, 2)
+            self.assertIn("permission", err)
+
+    def test_token_file_isolates_gh_and_agent_env(self):
+        tok = self.tmp / "good.tok"
+        tok.write_text("  test-fine-grained-token \n", encoding="utf-8")
+        os.chmod(tok, 0o600)
+        gh_envs = []
+        cfg_states = []
+        agent_envs = []
+
+        def fake_run(cmd, **kw):
+            res = subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+            if cmd[0] == "gh":
+                env = kw.get("env")
+                gh_envs.append(env)
+                cfg = Path(env["GH_CONFIG_DIR"])
+                cfg_states.append((cfg.is_dir(), list(cfg.iterdir())))
+                if cmd[1:3] == ["repo", "view"]:
+                    res.stdout = "o/r\n"
+                elif cmd[1:3] == ["issue", "list"]:
+                    res.stdout = json.dumps(
+                        [{"number": 3, "body": "draft",
+                          "author": {"login": "alice"}}])
+                elif cmd[1:3] == ["api", "user"]:
+                    res.stdout = "alice\n"
+            elif cmd[0] == "git":
+                res.stdout = b"https://github.com/o/r.git\n"
+            elif cmd[0] == "my-agent":
+                agent_envs.append(kw.get("env"))
+                res.stdout = "- none\nVERDICT: CARD_OK\n"
+            return res
+
+        fake_environ = {
+            "PATH": "/usr/bin",
+            "HOME": "/tmp/fake-home",
+            "USER": "tester",
+            "LANG": "C.UTF-8",
+            "TMPDIR": str(self.tmp),
+            "XDG_RUNTIME_DIR": "/run/user/1000",
+            "GH_TOKEN": "ambient-gh",
+            "GITHUB_TOKEN": "ambient-github",
+            "GH_ENTERPRISE_TOKEN": "ambient-ent",
+            "UNLISTED_VAR": "kept-for-gh-only",
+        }
+        buf = io.StringIO()
+        with mock.patch.dict(os.environ, fake_environ, clear=True), \
+                mock.patch.object(review_queue.subprocess, "run",
+                                  side_effect=fake_run), \
+                contextlib.redirect_stdout(buf):
+            rc = review_queue.main(
+                ["--token-file", str(tok), "--cards", "--", "my-agent"])
+        self.assertEqual(rc, 0)
+        self.assertGreaterEqual(len(gh_envs), 3)
+        for env, (is_dir, entries) in zip(gh_envs, cfg_states):
+            self.assertIsNotNone(env)
+            self.assertEqual(env["GH_TOKEN"], "test-fine-grained-token")
+            self.assertNotIn("GITHUB_TOKEN", env)
+            self.assertNotIn("GH_ENTERPRISE_TOKEN", env)
+            self.assertEqual(env["UNLISTED_VAR"], "kept-for-gh-only")
+            self.assertTrue(is_dir)
+            self.assertEqual(entries, [])
+        self.assertEqual(len(agent_envs), 1)
+        aenv = agent_envs[0]
+        self.assertIsNotNone(aenv)
+        self.assertEqual(
+            set(aenv.keys()),
+            {"PATH", "HOME", "USER", "LANG", "TMPDIR", "XDG_RUNTIME_DIR"},
+        )
+        self.assertNotIn("GH_TOKEN", aenv)
+        self.assertNotIn("GITHUB_TOKEN", aenv)
+        self.assertNotIn("GH_ENTERPRISE_TOKEN", aenv)
+        self.assertNotIn("UNLISTED_VAR", aenv)
+        self.assertNotIn("test-fine-grained-token", aenv.values())
+
+    def test_without_token_file_keeps_default_gh_env(self):
+        gh_envs = []
+
+        def fake_run(cmd, **kw):
+            res = subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+            if cmd[0] == "gh":
+                gh_envs.append(kw.get("env"))
+                if cmd[1:3] == ["repo", "view"]:
+                    res.stdout = "o/r\n"
+                elif cmd[1:3] == ["issue", "list"]:
+                    res.stdout = "[]"
+                elif cmd[1:3] == ["api", "user"]:
+                    res.stdout = "alice\n"
+            elif cmd[0] == "git":
+                res.stdout = b"https://github.com/o/r.git\n"
+            return res
+
+        with mock.patch.object(review_queue.subprocess, "run",
+                               side_effect=fake_run):
+            rc = review_queue.main(["--cards", "--", "my-agent"])
+        self.assertEqual(rc, 0)
+        self.assertTrue(gh_envs)
+        self.assertTrue(all(env is None for env in gh_envs))
+
+
+class OutputGuardTests(QueueTestCase):
+    def test_secret_shaped_output_blocks_pr_review_and_merge(self):
+        samples = [
+            "-----BEGIN RSA PRIVATE KEY-----\nVERDICT: APPROVE\n",
+            "found PRIVATE KEY block\nVERDICT: APPROVE\n",
+            "token ghp_" + "a" * 20 + "\nVERDICT: APPROVE\n",
+            "token gho_" + "B" * 20 + "\nVERDICT: REQUEST_CHANGES\n",
+            "token github_pat_" + "c_1" * 8 + "\nVERDICT: APPROVE\n",
+        ]
+        for secret_out in samples:
+            gh, git, head = self.pr()
+            gh = make_gh([(("api", "-X", "POST"), "{}"),
+                          (("pr", "merge"), "")]
+                         + queue_routes([7]) + pr_routes(7, head))
+            rc, out = self.run_silent(gh, git, make_agent(secret_out),
+                                      dry_run=False)
+            self.assertEqual(rc, 0)
+            self.assertEqual(posted(gh), [])
+            self.assertIn("BLOCKED secret-shaped output #7", out)
+
+    def test_secret_shaped_output_blocks_card_comment(self):
+        routes = [
+            (("api", "user"), "alice\n"),
+            (("issue", "list"),
+             json.dumps([{"number": 3, "body": "card draft",
+                          "author": {"login": "alice"}}])),
+            (("issue", "comment", "3"), ""),
+            (("issue", "edit", "3"), ""),
+        ]
+        gh = make_gh(routes)
+        secret_out = "leaked ghs_" + "9" * 20 + "\nVERDICT: CARD_FIX\n"
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = review_queue.run(["echo"], dry_run=False, gh=gh,
+                                  agent=make_agent(secret_out), cards=True)
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            [c for c in gh.calls if c[:2] in (("issue", "comment"),
+                                              ("issue", "edit"))],
+            [])
+        self.assertIn("BLOCKED secret-shaped output #3", buf.getvalue())
+
+    def test_neutralises_mentions_and_closing_keywords_in_pr_and_card(self):
+        raw = ("- ping @alice and (@bob), contact dev@example.invalid\n"
+               "- Closes #12, fixes #34, RESOLVED: #56, resolve #78\n"
+               "VERDICT: REQUEST_CHANGES\n")
+        gh, git, head = self.pr()
+        gh = make_gh([(("api", "-X", "POST"), "{}")]
+                     + queue_routes([7]) + pr_routes(7, head))
+        rc, _ = self.run_silent(gh, git, make_agent(raw), dry_run=False)
+        self.assertEqual(rc, 0)
+        posts = [c for c in gh.calls if c[:3] == ("api", "-X", "POST")]
+        self.assertEqual(len(posts), 1)
+        body_arg = posts[0][-1]
+        self.assertIn("@\u200balice", body_arg)
+        self.assertIn("(@\u200bbob)", body_arg)
+        self.assertIn("dev@example.invalid", body_arg)
+        self.assertIn("Closes \u200b#12", body_arg)
+        self.assertIn("fixes \u200b#34", body_arg)
+        self.assertIn("RESOLVED: \u200b#56", body_arg)
+        self.assertIn("resolve \u200b#78", body_arg)
+
+        routes = [
+            (("api", "user"), "alice\n"),
+            (("issue", "list"),
+             json.dumps([{"number": 3, "body": "card draft",
+                          "author": {"login": "alice"}}])),
+            (("issue", "comment", "3"), ""),
+        ]
+        gh_card = make_gh(routes)
+        card_out = "cc @mallory Fix #99\nVERDICT: CARD_FIX\n"
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = review_queue.run(["echo"], dry_run=False, gh=gh_card,
+                                  agent=make_agent(card_out), cards=True)
+        self.assertEqual(rc, 0)
+        comments = [c for c in gh_card.calls if c[:2] == ("issue", "comment")]
+        self.assertEqual(len(comments), 1)
+        self.assertIn("@\u200bmallory", comments[0][-1])
+        self.assertIn("Fix \u200b#99", comments[0][-1])
+
+
+class HardeningQueueTests(QueueTestCase):
+    def test_skips_own_pr_in_pr_mode(self):
+        git, heads = make_repo(self, {7: {"docs/x.md": b"x\n"}})
+        routes = [
+            (("repo", "view"), "o/r\n"),
+            (("api", "user"), "alice\n"),
+            (("pr", "list", "--state", "open", "--limit", "1000"),
+             json.dumps([{"number": 7, "author": {"login": "alice"}}])),
+        ] + pr_routes(7, heads[7])
+        gh = make_gh(routes)
+        agent = make_agent(APPROVE_OUT)
+        rc, out = self.run_silent(gh, git, agent, dry_run=False)
+        self.assertEqual(rc, 0)
+        self.assertEqual(agent.calls, [])
+        self.assertEqual(posted(gh), [])
+        self.assertIn("SKIP own PR #7", out)
+
+        # Also skip when author is only present on the pulls API payload.
+        routes_pull = [
+            (("api", "repos/o/r/pulls/7"),
+             json.dumps({"changed_files": 1, "body": BODY,
+                         "base": {"ref": "main"},
+                         "user": {"login": "alice"}})),
+        ] + queue_routes([7]) + pr_routes(7, heads[7])
+        gh2 = make_gh(routes_pull)
+        rc2, out2 = self.run_silent(gh2, git, agent, dry_run=False)
+        self.assertEqual(rc2, 0)
+        self.assertEqual(agent.calls, [])
+        self.assertIn("SKIP own PR #7", out2)
+
+    def test_max_files_holds_large_pr(self):
+        files = {f"docs/f{i:02}.md": b"x\n" for i in range(11)}
+        gh, git, _ = self.pr(files)
+        agent = make_agent(APPROVE_OUT)
+        rc, out = self.run_silent(gh, git, agent)
+        self.assertEqual(rc, 0)
+        self.assertEqual(agent.calls, [])
+        self.assertEqual(posted(gh), [])
+        self.assertIn("HOLD too large #7", out)
+
+        gh2, git2, _ = self.pr(files)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc2 = review_queue.run(["echo"], dry_run=True, gh=gh2,
+                                   agent=agent, git=git2, max_files=11)
+        self.assertEqual(rc2, 0)
+        self.assertEqual(len(agent.calls), 1)
+
+    def test_max_diff_lines_holds_large_pr(self):
+        files = {"docs/big.md": b"line\n" * 305}
+        gh, git, _ = self.pr(files)
+        agent = make_agent(APPROVE_OUT)
+        rc, out = self.run_silent(gh, git, agent)
+        self.assertEqual(rc, 0)
+        self.assertEqual(agent.calls, [])
+        self.assertEqual(posted(gh), [])
+        self.assertIn("HOLD too large #7", out)
+
+        gh2, git2, _ = self.pr(files)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc2 = review_queue.run(["echo"], dry_run=True, gh=gh2,
+                                   agent=agent, git=git2, max_diff_lines=400)
+        self.assertEqual(rc2, 0)
+        self.assertEqual(len(agent.calls), 1)
+
+    def test_author_email_passed_to_squash_merge(self):
+        gh, git, head = self.pr()
+        gh = make_gh([(("api", "-X", "POST"), "{}"), (("pr", "merge"), "")]
+                     + queue_routes([7]) + pr_routes(7, head))
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = review_queue.run(
+                ["echo"], dry_run=False, gh=gh,
+                agent=make_agent(APPROVE_OUT), git=git,
+                author_email="steward@example.invalid")
+        self.assertEqual(rc, 0)
+        merges = [c for c in gh.calls if c[:2] == ("pr", "merge")]
+        self.assertEqual(
+            merges,
+            [("pr", "merge", "7", "--auto", "--squash",
+              "--author-email", "steward@example.invalid",
+              "--match-head-commit", head)],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
