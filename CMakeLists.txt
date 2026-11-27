@@ -65,6 +65,9 @@ target_link_libraries(test_reload PRIVATE snes2dhd_core)
 add_executable(test_input tests/headless/test_input.cpp)
 target_link_libraries(test_input PRIVATE snes2dhd_core)
 
+add_executable(test_cartridge tests/headless/test_cartridge.cpp)
+target_link_libraries(test_cartridge PRIVATE snes2dhd_core)
+
 find_package(SDL3 REQUIRED CONFIG COMPONENTS SDL3)
 add_executable(snes2dhd src/frontend/main.cpp)
 target_link_libraries(snes2dhd PRIVATE snes2dhd_core SDL3::SDL3)
@@ -83,6 +86,9 @@ add_test(NAME headless_reload
 )
 add_test(NAME headless_input
   COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tests/headless/test_input.py $<TARGET_FILE:test_input>
+)
+add_test(NAME cartridge_mapping
+  COMMAND $<TARGET_FILE:test_cartridge>
 )
 add_test(NAME keyboard_input
   COMMAND $<TARGET_FILE:test_keyboard_input>
