@@ -36,11 +36,17 @@ gh api -X PUT "repos/$R/actions/permissions/fork-pr-contributor-approval" --sile
 EOF
 
 # Branch protection. app_id 15368 = GitHub Actions, so only the real workflow
-# can satisfy `checks`. enforce_admins=false: the sole CODEOWNER can't approve
-# his own PRs, so he merges protected-path work as admin.
+# can satisfy required checks. enforce_admins=false: the sole CODEOWNER can't
+# approve his own PRs, so he merges protected-path work as admin.
 gh api -X PUT "repos/$R/branches/main/protection" --silent --input - <<'EOF'
 {
-  "required_status_checks": {"strict": false, "checks": [{"context": "checks", "app_id": 15368}]},
+  "required_status_checks": {
+    "strict": false,
+    "checks": [
+      {"context": "checks", "app_id": 15368},
+      {"context": "linux-build", "app_id": 15368}
+    ]
+  },
   "enforce_admins": false,
   "required_pull_request_reviews": {
     "dismiss_stale_reviews": true,
