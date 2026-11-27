@@ -58,10 +58,14 @@ auto main(int argc, char** argv) -> int {
   SDL_Window* window = nullptr;
   SDL_Renderer* renderer = nullptr;
   SDL_Texture* texture = nullptr;
+  SDL_AudioStream* audio_stream = nullptr;
+  bool audio_inited = false;
   std::uint32_t texture_width = 0, texture_height = 0;
 
   // One exit path, so every failure still tears down SDL and the core.
   auto finish = [&](int code) {
+    if(audio_stream) SDL_DestroyAudioStream(audio_stream);
+    if(audio_inited) SDL_QuitSubSystem(SDL_INIT_AUDIO);
     if(texture) SDL_DestroyTexture(texture);
     if(renderer) SDL_DestroyRenderer(renderer);
     if(window) SDL_DestroyWindow(window);
@@ -79,6 +83,18 @@ auto main(int argc, char** argv) -> int {
   if(!SDL_SetRenderVSync(renderer, 1)) {
     sdl_error("SDL_SetRenderVSync");
     return finish(1);
+  }
+
+  // Audio playback is best-effort so headless/offscreen runs without an audio device still succeed.
+  if(SDL_InitSubSystem(SDL_INIT_AUDIO)) {
+    audio_inited = true;
+    const SDL_AudioSpec spec{SDL_AUDIO_S16, 2, snes2dhd::AudioSampleRate};
+    audio_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
+    if(audio_stream && !SDL_ResumeAudioStreamDevice(audio_stream)) {
+      sdl_error("SDL_ResumeAudioStreamDevice");
+      SDL_DestroyAudioStream(audio_stream);
+      audio_stream = nullptr;
+    }
   }
 
   long frames = 0;
@@ -99,6 +115,17 @@ auto main(int argc, char** argv) -> int {
     snes2dhd::set_buttons(snes2dhd::detail::keyboard_buttons(pressed, focused));
 
     const snes2dhd::Frame& frame = snes2dhd::run_frame();
+
+    if(audio_stream) {
+      const auto samples = snes2dhd::audio_samples();
+      const int max_queued = snes2dhd::AudioSampleRate * 2 * (int)sizeof(std::int16_t) / 4;
+      if(!samples.empty() && SDL_GetAudioStreamQueued(audio_stream) < max_queued) {
+        if(!SDL_PutAudioStreamData(audio_stream, samples.data(), (int)(samples.size() * sizeof(std::int16_t)))) {
+          sdl_error("SDL_PutAudioStreamData");
+          return finish(1);
+        }
+      }
+    }
 
     // The SNES can change resolution mid-game, so the texture follows the frame.
     if(!texture || frame.width != texture_width || frame.height != texture_height) {

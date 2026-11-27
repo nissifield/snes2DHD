@@ -1,10 +1,24 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 #include <string>
 #include <vector>
 
 namespace snes2dhd {
+
+enum class Region {
+  NTSC,
+  PAL,
+};
+
+enum class Mapping {
+  LoROM,
+  HiROM,
+  ExHiROM,
+};
+
+inline constexpr int AudioSampleRate = 48000;
 
 struct Frame {
   std::vector<std::uint32_t> pixels;  // width*height, row-major, no row padding, XRGB8888
@@ -13,6 +27,10 @@ struct Frame {
 
 // Loads a ROM file and powers on the SNES. Returns an error message, or "" on success.
 std::string load(const std::string& rom_path);
+
+// Detected region and ROM mapping of the loaded cartridge (defaults to NTSC / LoROM when unloaded).
+Region region();
+Mapping mapping();
 
 // Controller 1 buttons, one bit each, in ares Gamepad shift order.
 enum Button : std::uint16_t {
@@ -36,6 +54,9 @@ void set_buttons(std::uint16_t buttons);
 
 // Runs emulation until ares delivers the next video frame, and returns it.
 const Frame& run_frame();
+
+// Interleaved stereo 16-bit PCM samples (AudioSampleRate Hz) emitted during the last run_frame().
+std::span<const std::int16_t> audio_samples();
 
 void unload();
 
