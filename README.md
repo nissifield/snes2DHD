@@ -24,16 +24,16 @@ Bring your own legally obtained ROM. Linux technical previews are on the [releas
 
 Technical previews are not playable: there is no audio or save-state support yet. The Linux binary needs a recent glibc (Fedora 44 era) and SDL3 from your distribution; it is not a portable build. There are no Windows builds.
 
-Controller 1 is fixed to the keyboard while the window has focus:
+Controller 1 uses the keyboard or the first connected standard gamepad while the window has focus:
 
-| Key | Button |
-| --- | --- |
-| Arrow keys | D-pad |
-| Z / X | B / A |
-| A / S | Y / X |
-| Q / W | L / R |
-| Enter | Start |
-| Right Shift | Select |
+| Key | Gamepad | Button |
+| --- | --- | --- |
+| Arrow keys | D-pad / Left stick | D-pad |
+| Z / X | South / East | B / A |
+| A / S | West / North | Y / X |
+| Q / W | Left / Right shoulder | L / R |
+| Enter | Start | Start |
+| Right Shift | Back / Select | Select |
 
 When playable builds arrive, follow the [playtesting guide](./docs/playtesting.md) to compare profile output with stock 2D and report problems.
 
