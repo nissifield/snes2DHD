@@ -31,6 +31,11 @@ auto write_oam_entry(snes2dhd::FrameState& frame, std::uint8_t index, std::uint8
   frame.mem_writes.push_back({0, snes2dhd::MemorySpace::Oam, base + 3, attr});
 }
 
+auto write_reg16(snes2dhd::FrameState& frame, std::uint16_t scanline, std::uint8_t reg, std::uint16_t value) -> void {
+  frame.reg_writes.push_back({scanline, reg, static_cast<std::uint8_t>(value & 0xffu)});
+  frame.reg_writes.push_back({scanline, reg, static_cast<std::uint8_t>((value >> 8) & 0xffu)});
+}
+
 auto make_test_profile() -> snes2dhd::profile::Profile {
   using namespace snes2dhd::profile;
   Profile p;
@@ -84,6 +89,7 @@ auto main() -> int {
     check("no profile: default ambient lighting", s.lighting == Lighting{1.0f, Vec3{0.0f, 0.0f, -1.0f}, 0.0f, 0.0f});
     check("no profile: single stock_2d plane", s.planes.size() == 1 && s.planes[0] == Plane{0, 0.0f, 0.0f, true});
     check("no profile: empty billboards", s.billboards.empty());
+    check("no profile: mode7 nullopt", !s.mode7.has_value());
   }
 
   // 2. Profile with unmatched WRAM selector -> safe stock-2D fallback.
@@ -96,6 +102,7 @@ auto main() -> int {
     check("unmatched selector: is_stock_2d", s.is_stock_2d);
     check("unmatched selector: single plane", s.planes.size() == 1 && s.planes[0] == Plane{0, 0.0f, 0.0f, true});
     check("unmatched selector: empty billboards", s.billboards.empty());
+    check("unmatched selector: mode7 nullopt", !s.mode7.has_value());
   }
 
   // 3. Matched WRAM selector (latest write wins), sorted planes, unconfigured active BG fallback,
@@ -133,6 +140,7 @@ auto main() -> int {
     const Scene s_repeat = build_scene(frame, profile);
     check("matched: deterministic repeat", s == s_repeat);
     check("matched: !is_stock_2d", !s.is_stock_2d);
+    check("matched: mode7 nullopt when BGMODE != 7", !s.mode7.has_value());
     check("matched: active_scene_id", s.active_scene_id == "town");
     check("matched: camera", !s.camera.orthographic && approx(s.camera.fov_deg, 42.5f)
         && approx(s.camera.pitch_deg, 30.0f) && approx(s.camera.distance, 14.5f));
@@ -202,6 +210,106 @@ auto main() -> int {
     check("explicit WRAM selector overrides earlier default scene",
         !selector_scene.is_stock_2d && selector_scene.active_scene_id == "boss-room"
         && selector_scene.planes.size() == 1 && approx(selector_scene.planes[0].depth, -4.0f));
+  }
+
+  // 5. Mode 7 remains inactive without a matching profile or when latest BGMODE != 7.
+  {
+    const profile::Profile profile = make_test_profile();
+    FrameState frame;
+    frame.reg_writes.push_back({0, 0x05, 0x07});
+    write_reg16(frame, 0, 0x1b, 0x0200u);
+
+    check("mode7: no profile -> nullopt even with BGMODE=7", !build_scene(frame, std::nullopt).mode7.has_value());
+
+    frame.mem_writes.push_back({0, MemorySpace::Wram, 0x1234, 1});
+    check("mode7: unmatched selector -> nullopt even with BGMODE=7", !build_scene(frame, profile).mode7.has_value());
+
+    frame.mem_writes.push_back({1, MemorySpace::Wram, 0x1234, 9});
+    frame.reg_writes.push_back({40, 0x05, 0x01});  // latest BGMODE switches back to mode 1
+    const Scene s = build_scene(frame, profile);
+    check("mode7: latest BGMODE != 7 -> nullopt", !s.is_stock_2d && !s.mode7.has_value());
+  }
+
+  // 6. Mode 7 active with unwritten matrix/scroll defaults and no layer-0 rule.
+  {
+    profile::Profile profile;
+    profile.game_id = "synthetic-mode7-defaults";
+    profile.rom_sha256 = {std::string(64, '0')};
+    profile::SceneRule overworld;
+    overworld.id = "overworld";
+    overworld.layers = {profile::LayerRule{1, profile::RenderMode::Flat, -2.0f, 0.0f}};
+    profile.scenes = {overworld};
+
+    FrameState frame;
+    frame.reg_writes.push_back({0, 0x05, 0x01});
+    frame.reg_writes.push_back({20, 0x05, 0x87});  // low 3 bits == 7 with upper bits set
+
+    const Scene s = build_scene(frame, profile);
+    check("mode7 defaults: active", s.mode7.has_value() && s.mode7->active);
+    if(s.mode7) {
+      check("mode7 defaults: identity matrix",
+          approx(s.mode7->m7a, 1.0f) && approx(s.mode7->m7b, 0.0f)
+          && approx(s.mode7->m7c, 0.0f) && approx(s.mode7->m7d, 1.0f));
+      check("mode7 defaults: zero center/scroll/m7sel",
+          s.mode7->center_x == 0 && s.mode7->center_y == 0
+          && s.mode7->scroll_x == 0 && s.mode7->scroll_y == 0 && s.mode7->m7sel == 0);
+      check("mode7 defaults: unconfigured layer 0 depth/tilt",
+          approx(s.mode7->depth, 0.0f) && approx(s.mode7->tilt_deg, 0.0f));
+    }
+  }
+
+  // 7. Mode 7 register latching: signed 8.8 M7A-D, signed 13-bit M7X/Y/HOFS/VOFS, M7SEL,
+  //    shared latch across writes, layer-0 depth/tilt inheritance, and deterministic output.
+  {
+    profile::Profile profile = make_test_profile();
+    profile.scenes[0].layers.push_back(profile::LayerRule{0, profile::RenderMode::Flat, -2.25f, 22.5f});
+
+    FrameState frame;
+    frame.mem_writes.push_back({0, MemorySpace::Wram, 0x1234, 9});
+    frame.reg_writes.push_back({0, 0x05, 0x07});
+    frame.reg_writes.push_back({0, 0x1a, 0x01});
+    write_reg16(frame, 0, 0x1b, 0x0180u);   // initial M7A = +1.5, leaves m7_latch = 0x01
+    frame.reg_writes.push_back({10, 0x1c, 0x02});  // single-byte M7B uses shared m7_latch -> 0x0201
+    frame.reg_writes.push_back({10, 0x1a, 0xc3});  // M7SEL does not clobber shared m7_latch
+    const Scene single_latch_scene = build_scene(frame, profile);
+    check("mode7 shared latch single-byte write",
+        single_latch_scene.mode7.has_value()
+        && approx(single_latch_scene.mode7->m7b, 513.0f / 256.0f));
+
+    write_reg16(frame, 120, 0x1b, 0xfe80u);  // latest M7A = -384 -> -1.5f
+    write_reg16(frame, 120, 0x1c, 0xff40u);  // M7B = -192 -> -0.75f
+    write_reg16(frame, 120, 0x1d, 0x00c0u);  // M7C = +192 -> +0.75f
+    write_reg16(frame, 120, 0x1e, 0x0240u);  // M7D = +576 -> +2.25f
+    write_reg16(frame, 120, 0x1f, 0xe100u);  // M7X = +256 (upper bits 13..15 masked)
+    write_reg16(frame, 120, 0x20, 0x1f80u);  // M7Y = -128 (signed 13-bit)
+    write_reg16(frame, 120, 0x0d, 0x1000u);  // M7HOFS = -4096 (min signed 13-bit)
+    write_reg16(frame, 120, 0x0e, 0x0fffu);  // M7VOFS = +4095 (max signed 13-bit)
+
+    const Scene s = build_scene(frame, profile);
+    const Scene s_repeat = build_scene(frame, profile);
+    check("mode7: deterministic repeat", s == s_repeat);
+    check("mode7: active", s.mode7.has_value() && s.mode7->active);
+    if(s.mode7) {
+      check("mode7: signed 8.8 m7a..m7d",
+          approx(s.mode7->m7a, -1.5f) && approx(s.mode7->m7b, -0.75f)
+          && approx(s.mode7->m7c, 0.75f) && approx(s.mode7->m7d, 2.25f));
+      check("mode7: signed 13-bit center_x/center_y",
+          s.mode7->center_x == 256 && s.mode7->center_y == -128);
+      check("mode7: signed 13-bit scroll_x/scroll_y",
+          s.mode7->scroll_x == -4096 && s.mode7->scroll_y == 4095);
+      check("mode7: m7sel", s.mode7->m7sel == 0xc3);
+      check("mode7: inherited layer 0 depth/tilt",
+          approx(s.mode7->depth, -2.25f) && approx(s.mode7->tilt_deg, 22.5f));
+    }
+
+    // Signed 16-bit 8.8 extreme boundaries (-128.0f and +127.99609375f).
+    write_reg16(frame, 140, 0x1b, 0x8000u);
+    write_reg16(frame, 140, 0x1d, 0x7fffu);
+    const Scene extreme = build_scene(frame, profile);
+    check("mode7: extreme 8.8 bounds",
+        extreme.mode7.has_value()
+        && approx(extreme.mode7->m7a, -128.0f)
+        && approx(extreme.mode7->m7c, 32767.0f / 256.0f));
   }
 
   if(failures) {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -35,6 +36,23 @@ struct Billboard {
   bool operator==(const Billboard&) const = default;
 };
 
+struct Mode7GroundPlane {
+  bool active = false;
+  float m7a = 1.0f;
+  float m7b = 0.0f;
+  float m7c = 0.0f;
+  float m7d = 1.0f;
+  std::int16_t center_x = 0;
+  std::int16_t center_y = 0;
+  std::int16_t scroll_x = 0;
+  std::int16_t scroll_y = 0;
+  std::uint8_t m7sel = 0;
+  float depth = 0.0f;
+  float tilt_deg = 0.0f;
+
+  bool operator==(const Mode7GroundPlane&) const = default;
+};
+
 struct Camera {
   float fov_deg = 0.0f;
   float pitch_deg = 0.0f;
@@ -62,6 +80,7 @@ struct Scene {
   Lighting lighting;
   std::vector<Plane> planes;
   std::vector<Billboard> billboards;
+  std::optional<Mode7GroundPlane> mode7;
 
   bool operator==(const Scene&) const = default;
 };

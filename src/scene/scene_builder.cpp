@@ -14,8 +14,19 @@ namespace {
 
 struct PpuState {
   std::uint8_t obsel = 0;
+  std::uint8_t bgmode = 0;
+  std::uint8_t m7sel = 0;
   std::uint8_t tm = 0;
   bool has_tm = false;
+  std::uint8_t m7_latch = 0;
+  std::uint16_t m7a = 0x0100u;
+  std::uint16_t m7b = 0;
+  std::uint16_t m7c = 0;
+  std::uint16_t m7d = 0x0100u;
+  std::uint16_t m7x = 0;
+  std::uint16_t m7y = 0;
+  std::uint16_t m7hofs = 0;
+  std::uint16_t m7vofs = 0;
 };
 
 auto make_stock_2d_scene(const FrameState& frame) -> Scene {
@@ -59,15 +70,64 @@ auto select_scene_rule(const FrameState& frame, const profile::Profile& profile)
 
 auto read_ppu_state(const FrameState& frame) -> PpuState {
   PpuState state;
+  // Mode 7 write-twice registers ($210D, $210E, $211B-$2120) share one 8-bit hardware latch.
+  auto latch_mode7 = [&](std::uint16_t& target, std::uint8_t value) {
+    target = static_cast<std::uint16_t>((static_cast<std::uint16_t>(value) << 8) | state.m7_latch);
+    state.m7_latch = value;
+  };
   for(const auto& w : frame.reg_writes) {
-    if(w.reg == 0x01) {
-      state.obsel = w.value;
-    } else if(w.reg == 0x2c) {
+    switch(w.reg) {
+    case 0x01: state.obsel = w.value; break;
+    case 0x05: state.bgmode = w.value; break;
+    case 0x0d: latch_mode7(state.m7hofs, w.value); break;
+    case 0x0e: latch_mode7(state.m7vofs, w.value); break;
+    case 0x1a: state.m7sel = w.value; break;
+    case 0x1b: latch_mode7(state.m7a, w.value); break;
+    case 0x1c: latch_mode7(state.m7b, w.value); break;
+    case 0x1d: latch_mode7(state.m7c, w.value); break;
+    case 0x1e: latch_mode7(state.m7d, w.value); break;
+    case 0x1f: latch_mode7(state.m7x, w.value); break;
+    case 0x20: latch_mode7(state.m7y, w.value); break;
+    case 0x2c:
       state.tm = w.value;
       state.has_tm = true;
+      break;
+    default: break;
     }
   }
   return state;
+}
+
+auto decode_m7_fixed8_8(std::uint16_t raw) -> float {
+  return static_cast<float>(static_cast<std::int16_t>(raw)) / 256.0f;
+}
+
+auto decode_m7_signed13(std::uint16_t raw) -> std::int16_t {
+  const std::uint16_t masked = static_cast<std::uint16_t>(raw & 0x1fffu);
+  return static_cast<std::int16_t>((masked & 0x1000u) != 0 ? (masked | 0xe000u) : masked);
+}
+
+auto build_mode7(const profile::SceneRule& rule, const PpuState& ppu) -> std::optional<Mode7GroundPlane> {
+  if((ppu.bgmode & 0x07u) != 7u) return std::nullopt;
+
+  Mode7GroundPlane plane;
+  plane.active = true;
+  plane.m7a = decode_m7_fixed8_8(ppu.m7a);
+  plane.m7b = decode_m7_fixed8_8(ppu.m7b);
+  plane.m7c = decode_m7_fixed8_8(ppu.m7c);
+  plane.m7d = decode_m7_fixed8_8(ppu.m7d);
+  plane.center_x = decode_m7_signed13(ppu.m7x);
+  plane.center_y = decode_m7_signed13(ppu.m7y);
+  plane.scroll_x = decode_m7_signed13(ppu.m7hofs);
+  plane.scroll_y = decode_m7_signed13(ppu.m7vofs);
+  plane.m7sel = ppu.m7sel;
+  for(const auto& layer_rule : rule.layers) {
+    if(layer_rule.layer == 0) {
+      plane.depth = layer_rule.depth;
+      plane.tilt_deg = layer_rule.tilt_deg;
+    }
+  }
+  return plane;
 }
 
 auto sprite_dimensions(std::uint8_t obsel, bool large) -> std::pair<int, int> {
@@ -227,6 +287,7 @@ Scene build_scene(const FrameState& frame, const std::optional<profile::Profile>
   };
   scene.planes = build_planes(*matched, ppu);
   scene.billboards = build_billboards(frame, *matched, ppu);
+  scene.mode7 = build_mode7(*matched, ppu);
   return scene;
 }
 
