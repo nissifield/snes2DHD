@@ -1,5 +1,7 @@
 #pragma once
 
+#include <core/frame_state.hpp>
+
 #include <cstdint>
 #include <span>
 #include <string>
@@ -54,6 +56,9 @@ void set_buttons(std::uint16_t buttons);
 
 // Runs emulation until ares delivers the next video frame, and returns it.
 const Frame& run_frame();
+
+// FrameState captured for the most recent run_frame() (default empty state when unloaded).
+const FrameState& last_frame_state();
 
 // Interleaved stereo 16-bit PCM samples (AudioSampleRate Hz) emitted during the last run_frame().
 std::span<const std::int16_t> audio_samples();

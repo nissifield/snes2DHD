@@ -3,6 +3,9 @@
 #include <frontend/frame_pacer.hpp>
 #include <frontend/gamepad_input.hpp>
 #include <frontend/keyboard_input.hpp>
+#include <frontend/render_toggle.hpp>
+#include <profile/profile.hpp>
+#include <scene/scene_builder.hpp>
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -23,7 +26,7 @@ namespace {
 constexpr std::uintmax_t MaxStateFileBytes = 64ULL * 1024ULL * 1024ULL;
 
 auto usage() -> void {
-  std::fputs("usage: snes2dhd [--quit-after N] <rom>\n", stderr);
+  std::fputs("usage: snes2dhd [--quit-after N] [--profile <path>] <rom>\n", stderr);
 }
 
 auto sdl_error(const char* call) -> void {
@@ -106,23 +109,49 @@ auto read_gamepad(SDL_Gamepad* pad) -> snes2dhd::detail::GamepadSnapshot {
 
 auto main(int argc, char** argv) -> int {
   long quit_after = 0;
+  std::optional<std::string> profile_path;
   int arg = 1;
-  if(argc > 1 && std::strcmp(argv[1], "--quit-after") == 0) {
-    if(argc < 4) {
+  while(arg < argc && argv[arg][0] == '-') {
+    if(std::strcmp(argv[arg], "--quit-after") == 0) {
+      if(arg + 1 >= argc) {
+        usage();
+        return 2;
+      }
+      char* end = nullptr;
+      quit_after = std::strtol(argv[arg + 1], &end, 10);
+      if(end == argv[arg + 1] || *end || quit_after < 1) {
+        usage();
+        return 2;
+      }
+      arg += 2;
+    } else if(std::strcmp(argv[arg], "--profile") == 0) {
+      if(arg + 1 >= argc || argv[arg + 1][0] == '\0') {
+        usage();
+        return 2;
+      }
+      profile_path = argv[arg + 1];
+      arg += 2;
+    } else {
       usage();
       return 2;
     }
-    char* end = nullptr;
-    quit_after = std::strtol(argv[2], &end, 10);
-    if(end == argv[2] || *end || quit_after < 1) {
-      usage();
-      return 2;
-    }
-    arg = 3;
   }
-  if(argc != arg + 1 || argv[arg][0] == '-') {
+  if(arg + 1 != argc) {
     usage();
     return 2;
+  }
+
+  snes2dhd::detail::RenderToggle render_toggle;
+  if(profile_path.has_value()) {
+    auto res = snes2dhd::profile::load_profile_file(*profile_path);
+    for(const auto& warning : res.warnings) {
+      std::fprintf(stderr, "profile warning: %s\n", warning.c_str());
+    }
+    if(res.profile.has_value()) {
+      render_toggle.loaded_profile = std::move(res.profile);
+    } else {
+      std::fprintf(stderr, "profile load: %s\n", res.error.c_str());
+    }
   }
 
   const std::string rom_path = argv[arg];
@@ -180,7 +209,11 @@ auto main(int argc, char** argv) -> int {
     return code;
   };
 
-  if(!SDL_CreateWindowAndRenderer("snes2DHD", 768, 672, SDL_WINDOW_RESIZABLE, &window, &renderer)) {
+  auto window_title = [&]() -> std::string {
+    return std::string("snes2dhd ") + render_toggle.mode_label();
+  };
+
+  if(!SDL_CreateWindowAndRenderer(window_title().c_str(), 768, 672, SDL_WINDOW_RESIZABLE, &window, &renderer)) {
     sdl_error("SDL_CreateWindowAndRenderer");
     return finish(1);
   }
@@ -214,7 +247,12 @@ auto main(int argc, char** argv) -> int {
       if(event.type == SDL_EVENT_QUIT) {
         quit = true;
       } else if(event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
-        if(event.key.key == SDLK_F5) {
+        if(event.key.scancode == SDL_SCANCODE_F2) {
+          render_toggle.toggle();
+          if(!SDL_SetWindowTitle(window, window_title().c_str())) {
+            sdl_error("SDL_SetWindowTitle");
+          }
+        } else if(event.key.key == SDLK_F5) {
           const auto state = snes2dhd::save_state();
           if(state.empty()) {
             std::fputs("save state: core returned empty state\n", stderr);
@@ -250,6 +288,10 @@ auto main(int argc, char** argv) -> int {
                           snes2dhd::detail::gamepad_buttons(pad_snapshot, focused));
 
     const snes2dhd::Frame& frame = snes2dhd::run_frame();
+    // shortcut: SDL 2D presentation remains active until the GPU shader draw pass lands
+    const snes2dhd::scene::Scene scene =
+        snes2dhd::scene::build_scene(snes2dhd::last_frame_state(), render_toggle.active_profile());
+    (void)scene;
 
     if(audio_stream) {
       const auto samples = snes2dhd::audio_samples();
