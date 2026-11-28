@@ -122,6 +122,15 @@ target_link_libraries(test_renderer PRIVATE snes2dhd_renderer)
 add_executable(test_post_fx tests/renderer/test_post_fx.cpp)
 target_link_libraries(test_post_fx PRIVATE snes2dhd_renderer)
 
+add_library(snes2dhd_tools STATIC
+  src/tools/tile_hash.cpp
+)
+target_include_directories(snes2dhd_tools PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(snes2dhd_tools PUBLIC snes2dhd_core)
+
+add_executable(test_tile_hash tests/tools/test_tile_hash.cpp)
+target_link_libraries(test_tile_hash PRIVATE snes2dhd_tools)
+
 enable_testing()
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 add_test(NAME headless_min_rom
@@ -165,6 +174,9 @@ add_test(NAME renderer_geometry
 )
 add_test(NAME post_fx
   COMMAND $<TARGET_FILE:test_post_fx>
+)
+add_test(NAME tile_hash
+  COMMAND $<TARGET_FILE:test_tile_hash>
 )
 add_test(NAME make_min_rom
   COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tests/headless/make_min_rom.py ${CMAKE_BINARY_DIR}/min.sfc
