@@ -1,11 +1,14 @@
 // Synthetic Scene Builder tests (zero ROM data).
 
 #include <scene/scene_builder.hpp>
+#include <tools/tile_hash.hpp>
 
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <optional>
+#include <span>
 #include <string>
 
 namespace {
@@ -34,6 +37,24 @@ auto write_oam_entry(snes2dhd::FrameState& frame, std::uint8_t index, std::uint8
 auto write_reg16(snes2dhd::FrameState& frame, std::uint16_t scanline, std::uint8_t reg, std::uint16_t value) -> void {
   frame.reg_writes.push_back({scanline, reg, static_cast<std::uint8_t>(value & 0xffu)});
   frame.reg_writes.push_back({scanline, reg, static_cast<std::uint8_t>((value >> 8) & 0xffu)});
+}
+
+auto write_vram_block(snes2dhd::FrameState& frame, std::uint32_t base_addr, std::span<const std::uint8_t> data) -> void {
+  for(std::size_t i = 0; i < data.size(); ++i) {
+    frame.mem_writes.push_back({
+      0,
+      snes2dhd::MemorySpace::Vram,
+      base_addr + static_cast<std::uint32_t>(i),
+      data[i],
+    });
+  }
+}
+
+auto to_upper_ascii(std::string text) -> std::string {
+  for(char& c : text) {
+    if(c >= 'a' && c <= 'f') c = static_cast<char>(c - 'a' + 'A');
+  }
+  return text;
 }
 
 auto make_test_profile() -> snes2dhd::profile::Profile {
@@ -310,6 +331,115 @@ auto main() -> int {
         extreme.mode7.has_value()
         && approx(extreme.mode7->m7a, -128.0f)
         && approx(extreme.mode7->m7c, 32767.0f / 256.0f));
+  }
+
+  // 8. Real 4bpp VRAM tile SHA-256 sprite rule matching (table 0, table 1 with non-zero OBSEL,
+  //    case-insensitive matching, last-write-wins, unmatched/unwritten safe flat fallback, determinism).
+  {
+    std::array<std::uint8_t, 32> stale_tile{};
+    std::array<std::uint8_t, 32> table0_tile{};
+    std::array<std::uint8_t, 32> table1_tile{};
+    std::array<std::uint8_t, 32> partial_tile{};
+    std::array<std::uint8_t, 32> unmatched_tile{};
+    std::array<std::uint8_t, 32> zero_tile{};
+    for(std::size_t i = 0; i < 32; ++i) {
+      stale_tile[i] = static_cast<std::uint8_t>(0x10u + i);
+      table0_tile[i] = static_cast<std::uint8_t>(0x40u + i);
+      table1_tile[i] = static_cast<std::uint8_t>(0xa0u + i);
+      unmatched_tile[i] = static_cast<std::uint8_t>(0xe0u + i);
+    }
+    partial_tile[0] = 0x7au;
+
+    const std::string sha_table0_upper = to_upper_ascii(tools::hash_tile_bytes(table0_tile));
+    const std::string sha_table0_lower = tools::hash_tile_bytes(table0_tile);
+    const std::string sha_table1_lower = tools::hash_tile_bytes(table1_tile);
+    std::string sha_partial_mixed = tools::hash_tile_bytes(partial_tile);
+    for(std::size_t i = 0; i < sha_partial_mixed.size(); i += 2u) {
+      if(sha_partial_mixed[i] >= 'a' && sha_partial_mixed[i] <= 'f') {
+        sha_partial_mixed[i] = static_cast<char>(sha_partial_mixed[i] - 'a' + 'A');
+      }
+    }
+    const std::string sha_zero_lower = tools::hash_tile_bytes(zero_tile);
+
+    profile::Profile profile;
+    profile.game_id = "synthetic-vram-sha256-test";
+    profile.rom_sha256 = {std::string(64, '0')};
+
+    profile::SceneRule stage;
+    stage.id = "vram-stage";
+    stage.sprites = {
+      profile::SpriteRule{sha_table0_upper, profile::RenderMode::Voxel, 0.75f, 1.5f},
+      profile::SpriteRule{sha_table0_lower, profile::RenderMode::Flat, 9.0f, 9.0f},  // duplicate: first rule wins
+      profile::SpriteRule{sha_table1_lower, profile::RenderMode::Voxel, -0.5f, 2.25f},
+      profile::SpriteRule{sha_partial_mixed, profile::RenderMode::Stock2D, 4.0f, 3.0f},
+      profile::SpriteRule{sha_zero_lower, profile::RenderMode::Voxel, 3.0f, 4.0f},
+    };
+    profile.scenes = {stage};
+
+    // Case A: OBSEL = 0x00 (base = 0x0000, gap = 0x0000) -> table 0 matching, partial Stock2D fallback,
+    //         unwritten VRAM fallback (must not match zero_tile SHA), and unmatched VRAM fallback.
+    FrameState frame0;
+    write_vram_block(frame0, 0x0080u, stale_tile);
+    write_vram_block(frame0, 0x0080u, table0_tile);  // last write wins at tile 0x04
+    frame0.mem_writes.push_back({1, MemorySpace::Vram, 0x00c0u, 0x7au});  // partial write at tile 0x06
+    write_vram_block(frame0, 0x0100u, unmatched_tile);  // tile 0x08 written, no matching rule
+    frame0.mem_writes.push_back({2, MemorySpace::Vram, 65536u + 0x0140u, 0x55u});  // OOB VRAM ignored (tile 0x0a)
+
+    write_oam_entry(frame0, 0, 16, 24, 0x04, 0x00);  // table 0 -> 0x0080 -> Voxel (uppercase rule)
+    write_oam_entry(frame0, 1, 32, 24, 0x06, 0x00);  // table 0 -> 0x00c0 -> Stock2D rule -> flat fallback
+    write_oam_entry(frame0, 2, 48, 24, 0x08, 0x00);  // table 0 -> 0x0100 -> unmatched SHA -> flat fallback
+    write_oam_entry(frame0, 3, 64, 24, 0x09, 0x00);  // table 0 -> 0x0120 -> unwritten VRAM -> flat fallback
+    write_oam_entry(frame0, 4, 80, 24, 0x0a, 0x00);  // table 0 -> 0x0140 -> only OOB write -> flat fallback
+
+    const Scene s0 = build_scene(frame0, profile);
+    check("vram sha256 table0: deterministic repeat", s0 == build_scene(frame0, profile));
+    check("vram sha256 table0: 5 billboards", s0.billboards.size() == 5);
+    if(s0.billboards.size() == 5) {
+      check("vram sha256 table0: oam 0 uppercase voxel match",
+          s0.billboards[0].oam_index == 0 && s0.billboards[0].voxel
+          && approx(s0.billboards[0].depth, 0.75f) && approx(s0.billboards[0].height, 12.0f));
+      check("vram sha256 table0: oam 1 Stock2D rule fallback",
+          s0.billboards[1].oam_index == 1 && !s0.billboards[1].voxel
+          && approx(s0.billboards[1].depth, 0.0f) && approx(s0.billboards[1].height, 8.0f));
+      check("vram sha256 table0: oam 2 unmatched sha fallback",
+          s0.billboards[2].oam_index == 2 && !s0.billboards[2].voxel
+          && approx(s0.billboards[2].depth, 0.0f) && approx(s0.billboards[2].height, 8.0f));
+      check("vram sha256 table0: oam 3 unwritten tile fallback",
+          s0.billboards[3].oam_index == 3 && !s0.billboards[3].voxel
+          && approx(s0.billboards[3].depth, 0.0f) && approx(s0.billboards[3].height, 8.0f));
+      check("vram sha256 table0: oam 4 OOB write ignored fallback",
+          s0.billboards[4].oam_index == 4 && !s0.billboards[4].voxel
+          && approx(s0.billboards[4].depth, 0.0f) && approx(s0.billboards[4].height, 8.0f));
+    }
+
+    // Case B: Non-zero OBSEL ($2101) base & gap bits + OBJ table 1 + wrap mod 65536.
+    // OBSEL = 0x0b: base = 3 -> 0xc000, gap = 1 -> 0x2000.
+    // Table 0 tile 0x02 -> 0xc040; Table 1 tile 0x02 -> (0xc000 + 0x2000 + 0x2000 + 0x0040) & 0xffff = 0x0040.
+    FrameState frame1;
+    frame1.reg_writes.push_back({0, 0x01, 0x01});   // earlier OBSEL overridden
+    frame1.reg_writes.push_back({5, 0x01, 0x0b});   // latest OBSEL: base=3 (0xc000), gap=1 (0x2000)
+    write_vram_block(frame1, 0xc040u, table0_tile);
+    write_vram_block(frame1, 0x0040u, table1_tile);
+    write_vram_block(frame1, 0xe040u, unmatched_tile);  // table 1 with gap=0 would look here; must not match
+
+    write_oam_entry(frame1, 0, 20, 40, 0x02, 0x00);  // table 0 -> 0xc040 -> Voxel (table0_tile)
+    write_oam_entry(frame1, 1, 44, 40, 0x02, 0x01);  // table 1 -> 0x0040 -> Voxel (table1_tile)
+    write_oam_entry(frame1, 2, 68, 40, 0x03, 0x01);  // table 1 -> 0x0060 -> unwritten -> flat fallback
+
+    const Scene s1 = build_scene(frame1, profile);
+    check("vram sha256 obsel: deterministic repeat", s1 == build_scene(frame1, profile));
+    check("vram sha256 obsel: 3 billboards", s1.billboards.size() == 3);
+    if(s1.billboards.size() == 3) {
+      check("vram sha256 obsel: table 0 non-zero base",
+          s1.billboards[0].oam_index == 0 && s1.billboards[0].voxel
+          && approx(s1.billboards[0].depth, 0.75f) && approx(s1.billboards[0].height, 12.0f));
+      check("vram sha256 obsel: table 1 base+gap+wrap",
+          s1.billboards[1].oam_index == 1 && s1.billboards[1].voxel
+          && approx(s1.billboards[1].depth, -0.5f) && approx(s1.billboards[1].height, 18.0f));
+      check("vram sha256 obsel: table 1 unwritten fallback",
+          s1.billboards[2].oam_index == 2 && !s1.billboards[2].voxel
+          && approx(s1.billboards[2].depth, 0.0f) && approx(s1.billboards[2].height, 8.0f));
+    }
   }
 
   if(failures) {
