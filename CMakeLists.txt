@@ -111,12 +111,16 @@ target_link_libraries(test_render_toggle PRIVATE snes2dhd_scene)
 
 add_library(snes2dhd_renderer STATIC
   src/renderer/renderer.cpp
+  src/renderer/post_fx.cpp
 )
 target_include_directories(snes2dhd_renderer PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(snes2dhd_renderer PUBLIC snes2dhd_scene PRIVATE SDL3::SDL3)
 
 add_executable(test_renderer tests/renderer/test_renderer.cpp)
 target_link_libraries(test_renderer PRIVATE snes2dhd_renderer)
+
+add_executable(test_post_fx tests/renderer/test_post_fx.cpp)
+target_link_libraries(test_post_fx PRIVATE snes2dhd_renderer)
 
 enable_testing()
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
@@ -158,6 +162,9 @@ add_test(NAME scene_builder
 )
 add_test(NAME renderer_geometry
   COMMAND $<TARGET_FILE:test_renderer>
+)
+add_test(NAME post_fx
+  COMMAND $<TARGET_FILE:test_post_fx>
 )
 add_test(NAME make_min_rom
   COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tests/headless/make_min_rom.py ${CMAKE_BINARY_DIR}/min.sfc
