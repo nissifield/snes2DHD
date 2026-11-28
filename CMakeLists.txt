@@ -83,14 +83,23 @@ target_include_directories(snes2dhd_profile PUBLIC ${CMAKE_SOURCE_DIR}/src)
 add_executable(test_profile tests/profile/test_profile.cpp)
 target_link_libraries(test_profile PRIVATE snes2dhd_profile)
 
+add_library(snes2dhd_tools STATIC
+  src/tools/tile_hash.cpp
+)
+target_include_directories(snes2dhd_tools PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(snes2dhd_tools PUBLIC snes2dhd_core)
+
+add_executable(test_tile_hash tests/tools/test_tile_hash.cpp)
+target_link_libraries(test_tile_hash PRIVATE snes2dhd_tools)
+
 add_library(snes2dhd_scene STATIC
   src/scene/scene_builder.cpp
 )
 target_include_directories(snes2dhd_scene PUBLIC ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(snes2dhd_scene PUBLIC snes2dhd_profile)
+target_link_libraries(snes2dhd_scene PUBLIC snes2dhd_profile PRIVATE snes2dhd_tools)
 
 add_executable(test_scene_builder tests/scene/test_scene_builder.cpp)
-target_link_libraries(test_scene_builder PRIVATE snes2dhd_scene)
+target_link_libraries(test_scene_builder PRIVATE snes2dhd_scene snes2dhd_tools)
 
 find_package(SDL3 REQUIRED CONFIG COMPONENTS SDL3)
 add_executable(snes2dhd src/frontend/main.cpp)
@@ -121,15 +130,6 @@ target_link_libraries(test_renderer PRIVATE snes2dhd_renderer)
 
 add_executable(test_post_fx tests/renderer/test_post_fx.cpp)
 target_link_libraries(test_post_fx PRIVATE snes2dhd_renderer)
-
-add_library(snes2dhd_tools STATIC
-  src/tools/tile_hash.cpp
-)
-target_include_directories(snes2dhd_tools PUBLIC ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(snes2dhd_tools PUBLIC snes2dhd_core)
-
-add_executable(test_tile_hash tests/tools/test_tile_hash.cpp)
-target_link_libraries(test_tile_hash PRIVATE snes2dhd_tools)
 
 enable_testing()
 find_package(Python3 COMPONENTS Interpreter REQUIRED)

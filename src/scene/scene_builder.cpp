@@ -1,9 +1,12 @@
 #include <scene/scene_builder.hpp>
 
+#include <tools/tile_hash.hpp>
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <unordered_map>
 #include <utility>
@@ -141,6 +144,39 @@ auto sprite_dimensions(std::uint8_t obsel, bool large) -> std::pair<int, int> {
   return {kSmallW[base], kSmallH[base]};
 }
 
+constexpr std::uint32_t kVramBytes = 65536u;
+constexpr std::uint32_t kTile4bppBytes = 32u;
+
+auto ascii_lower(char c) -> char {
+  if(c >= 'A' && c <= 'Z') return static_cast<char>(c - 'A' + 'a');
+  return c;
+}
+
+auto is_sha256_hex(std::string_view text) -> bool {
+  if(text.size() != 64u) return false;
+  for(char c : text) {
+    const bool is_hex = (c >= '0' && c <= '9')
+        || (c >= 'a' && c <= 'f')
+        || (c >= 'A' && c <= 'F');
+    if(!is_hex) return false;
+  }
+  return true;
+}
+
+auto to_lower_ascii(std::string_view text) -> std::string {
+  std::string out;
+  out.reserve(text.size());
+  for(char c : text) out.push_back(ascii_lower(c));
+  return out;
+}
+
+auto obj_tile_vram_addr(std::uint8_t obsel, std::uint8_t tile, std::uint8_t attr) -> std::uint32_t {
+  const std::uint32_t base_bytes = static_cast<std::uint32_t>(obsel & 0x07u) << 14u;
+  const std::uint32_t gap_bytes = static_cast<std::uint32_t>((obsel >> 3u) & 0x03u) << 13u;
+  const std::uint32_t table_offset = (attr & 0x01u) != 0u ? (0x2000u + gap_bytes) : 0u;
+  return (base_bytes + table_offset + static_cast<std::uint32_t>(tile) * kTile4bppBytes) & 0xffffu;
+}
+
 auto parse_hex_tile_id(std::string_view text) -> std::optional<std::uint16_t> {
   if(text.size() >= 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) {
     text.remove_prefix(2);
@@ -201,17 +237,37 @@ auto build_billboards(const FrameState& frame, const profile::SceneRule& rule, c
   }
   if(!any_oam) return {};
 
-  // shortcut: matches hex tile IDs (0..0x1ff) against OAM tile index; upgrade to full VRAM tile-data hashing in M3
-  std::vector<std::pair<std::uint16_t, const profile::SpriteRule*>> sprite_rules;
-  sprite_rules.reserve(rule.sprites.size());
+  std::unordered_map<std::string, const profile::SpriteRule*> sha256_rules;
+  // Keep short hex tile-ID matching as backward-compatible fallback when tile_hash is not 64 hex chars.
+  std::vector<std::pair<std::uint16_t, const profile::SpriteRule*>> tile_id_rules;
+  tile_id_rules.reserve(rule.sprites.size());
   for(const auto& sr : rule.sprites) {
-    if(const auto tile_id = parse_hex_tile_id(sr.tile_hash)) {
-      sprite_rules.emplace_back(*tile_id, &sr);
+    if(is_sha256_hex(sr.tile_hash)) {
+      sha256_rules.try_emplace(to_lower_ascii(sr.tile_hash), &sr);
+    } else if(sr.tile_hash.size() != 64u) {
+      if(const auto tile_id = parse_hex_tile_id(sr.tile_hash)) {
+        tile_id_rules.emplace_back(*tile_id, &sr);
+      }
     }
   }
 
-  auto find_rule = [&](std::uint16_t tile_id) -> const profile::SpriteRule* {
-    for(const auto& [id, sr] : sprite_rules) {
+  std::vector<std::uint8_t> vram;
+  std::vector<std::uint8_t> vram_written;
+  bool any_vram = false;
+  if(!sha256_rules.empty()) {
+    vram.assign(kVramBytes, 0u);
+    vram_written.assign(kVramBytes, 0u);
+    for(const auto& m : frame.mem_writes) {
+      if(m.space != MemorySpace::Vram || m.addr >= kVramBytes) continue;
+      const std::size_t addr = static_cast<std::size_t>(m.addr);
+      vram[addr] = m.value;
+      vram_written[addr] = 1u;
+      any_vram = true;
+    }
+  }
+
+  auto find_tile_id_rule = [&](std::uint16_t tile_id) -> const profile::SpriteRule* {
+    for(const auto& [id, sr] : tile_id_rules) {
       if(id == tile_id) return sr;
     }
     return nullptr;
@@ -238,9 +294,28 @@ auto build_billboards(const FrameState& frame, const profile::SceneRule& rule, c
     const int x = x_msb ? (x_raw - 512) : x_raw;
     if(x + sprite_w <= 0 || x >= static_cast<int>(frame.width)) continue;
 
-    const std::uint16_t tile_id = static_cast<std::uint16_t>(tile_low)
-        | static_cast<std::uint16_t>(static_cast<std::uint16_t>(attr & 0x01u) << 8);
-    const profile::SpriteRule* sr = find_rule(tile_id);
+    const profile::SpriteRule* sr = nullptr;
+    if(any_vram) {
+      const std::uint32_t tile_addr = obj_tile_vram_addr(ppu.obsel, tile_low, attr);
+      std::array<std::uint8_t, kTile4bppBytes> tile_bytes{};
+      bool tile_written = false;
+      for(std::uint32_t k = 0; k < kTile4bppBytes; ++k) {
+        const std::size_t addr = static_cast<std::size_t>((tile_addr + k) & 0xffffu);
+        tile_bytes[k] = vram[addr];
+        if(vram_written[addr] != 0u) tile_written = true;
+      }
+      if(tile_written) {
+        const std::string tile_sha = tools::hash_tile_bytes(tile_bytes);
+        if(const auto it = sha256_rules.find(tile_sha); it != sha256_rules.end()) {
+          sr = it->second;
+        }
+      }
+    }
+    if(!sr && !tile_id_rules.empty()) {
+      const std::uint16_t tile_id = static_cast<std::uint16_t>(tile_low)
+          | static_cast<std::uint16_t>(static_cast<std::uint16_t>(attr & 0x01u) << 8);
+      sr = find_tile_id_rule(tile_id);
+    }
 
     Billboard bb;
     bb.oam_index = static_cast<std::uint8_t>(i);
