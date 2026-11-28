@@ -75,6 +75,14 @@ target_link_libraries(test_save_state PRIVATE snes2dhd_core)
 add_executable(test_frame_state tests/headless/test_frame_state.cpp)
 target_link_libraries(test_frame_state PRIVATE snes2dhd_core)
 
+add_library(snes2dhd_profile STATIC
+  src/profile/profile.cpp
+)
+target_include_directories(snes2dhd_profile PUBLIC ${CMAKE_SOURCE_DIR}/src)
+
+add_executable(test_profile tests/profile/test_profile.cpp)
+target_link_libraries(test_profile PRIVATE snes2dhd_profile)
+
 find_package(SDL3 REQUIRED CONFIG COMPONENTS SDL3)
 add_executable(snes2dhd src/frontend/main.cpp)
 target_link_libraries(snes2dhd PRIVATE snes2dhd_core SDL3::SDL3)
@@ -117,6 +125,9 @@ add_test(NAME gamepad_input
 )
 add_test(NAME frame_pacer
   COMMAND $<TARGET_FILE:test_frame_pacer>
+)
+add_test(NAME profile_loader
+  COMMAND $<TARGET_FILE:test_profile>
 )
 add_test(NAME make_min_rom
   COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tests/headless/make_min_rom.py ${CMAKE_BINARY_DIR}/min.sfc
