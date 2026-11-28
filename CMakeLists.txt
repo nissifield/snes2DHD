@@ -94,7 +94,7 @@ target_link_libraries(test_scene_builder PRIVATE snes2dhd_scene)
 
 find_package(SDL3 REQUIRED CONFIG COMPONENTS SDL3)
 add_executable(snes2dhd src/frontend/main.cpp)
-target_link_libraries(snes2dhd PRIVATE snes2dhd_core SDL3::SDL3)
+target_link_libraries(snes2dhd PRIVATE snes2dhd_core snes2dhd_scene SDL3::SDL3)
 
 add_executable(test_keyboard_input tests/frontend/test_keyboard_input.cpp)
 target_include_directories(test_keyboard_input PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -105,6 +105,9 @@ target_include_directories(test_gamepad_input PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
 add_executable(test_frame_pacer tests/frontend/test_frame_pacer.cpp)
 target_include_directories(test_frame_pacer PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
+add_executable(test_render_toggle tests/frontend/test_render_toggle.cpp)
+target_link_libraries(test_render_toggle PRIVATE snes2dhd_scene)
 
 add_library(snes2dhd_renderer STATIC
   src/renderer/renderer.cpp
@@ -143,6 +146,9 @@ add_test(NAME gamepad_input
 )
 add_test(NAME frame_pacer
   COMMAND $<TARGET_FILE:test_frame_pacer>
+)
+add_test(NAME render_toggle
+  COMMAND $<TARGET_FILE:test_render_toggle>
 )
 add_test(NAME profile_loader
   COMMAND $<TARGET_FILE:test_profile>

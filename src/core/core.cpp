@@ -1,5 +1,7 @@
 #include "core.hpp"
 
+#include <core/tap_adapter.hpp>
+
 #include <ares/ares.hpp>
 #include <sfc/sfc.hpp>
 
@@ -61,6 +63,8 @@ struct HeadlessPlatform : ares::Platform {
   std::array<ares::Node::Input::Button, 12> buttons;
   std::uint16_t button_mask = 0;
   std::size_t expected_state_size = 0;
+  TapAdapter tap;
+  std::uint64_t frame_index = 0;
 
   auto pak(ares::Node::Object node) -> std::shared_ptr<nall::vfs::directory> override {
     return node->name() == "Super Famicom" ? system_pak : cartridge_pak;
@@ -418,7 +422,17 @@ const Frame& run_frame() {
   instance->audio_samples.clear();
   root->run();
   instance->frame_condition.wait(lock, [&] { return instance->frame_ready; });
+  // shortcut: per-scanline ares PPU tap writes attach when the patches/ares/ hook lands
+  instance->tap.begin_frame(
+      instance->frame_index++,
+      static_cast<std::uint16_t>(instance->frame.width),
+      static_cast<std::uint16_t>(instance->frame.height));
   return instance->frame;
+}
+
+const FrameState& last_frame_state() {
+  static const FrameState empty{};
+  return instance ? instance->tap.finish_frame() : empty;
 }
 
 std::span<const std::int16_t> audio_samples() {
