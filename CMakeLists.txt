@@ -121,6 +121,7 @@ target_link_libraries(test_render_toggle PRIVATE snes2dhd_scene)
 add_library(snes2dhd_renderer STATIC
   src/renderer/renderer.cpp
   src/renderer/post_fx.cpp
+  src/renderer/voxel_mesh.cpp
 )
 target_include_directories(snes2dhd_renderer PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(snes2dhd_renderer PUBLIC snes2dhd_scene PRIVATE SDL3::SDL3)
@@ -130,6 +131,9 @@ target_link_libraries(test_renderer PRIVATE snes2dhd_renderer)
 
 add_executable(test_post_fx tests/renderer/test_post_fx.cpp)
 target_link_libraries(test_post_fx PRIVATE snes2dhd_renderer)
+
+add_executable(test_voxel_mesh tests/renderer/test_voxel_mesh.cpp)
+target_link_libraries(test_voxel_mesh PRIVATE snes2dhd_renderer)
 
 enable_testing()
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
@@ -174,6 +178,9 @@ add_test(NAME renderer_geometry
 )
 add_test(NAME post_fx
   COMMAND $<TARGET_FILE:test_post_fx>
+)
+add_test(NAME voxel_mesh
+  COMMAND $<TARGET_FILE:test_voxel_mesh>
 )
 add_test(NAME tile_hash
   COMMAND $<TARGET_FILE:test_tile_hash>
