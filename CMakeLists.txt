@@ -106,6 +106,15 @@ target_include_directories(test_gamepad_input PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_executable(test_frame_pacer tests/frontend/test_frame_pacer.cpp)
 target_include_directories(test_frame_pacer PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
+add_library(snes2dhd_renderer STATIC
+  src/renderer/renderer.cpp
+)
+target_include_directories(snes2dhd_renderer PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(snes2dhd_renderer PUBLIC snes2dhd_scene PRIVATE SDL3::SDL3)
+
+add_executable(test_renderer tests/renderer/test_renderer.cpp)
+target_link_libraries(test_renderer PRIVATE snes2dhd_renderer)
+
 enable_testing()
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 add_test(NAME headless_min_rom
@@ -140,6 +149,9 @@ add_test(NAME profile_loader
 )
 add_test(NAME scene_builder
   COMMAND $<TARGET_FILE:test_scene_builder>
+)
+add_test(NAME renderer_geometry
+  COMMAND $<TARGET_FILE:test_renderer>
 )
 add_test(NAME make_min_rom
   COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tests/headless/make_min_rom.py ${CMAKE_BINARY_DIR}/min.sfc
