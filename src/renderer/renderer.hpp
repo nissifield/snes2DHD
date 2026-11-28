@@ -1,5 +1,6 @@
 #pragma once
 
+#include <renderer/post_fx.hpp>
 #include <scene/scene.hpp>
 
 #include <array>
@@ -70,11 +71,14 @@ public:
 
   const RenderBatch& prepare_batch(const scene::Scene& scene, float viewport_aspect = 4.0f / 3.0f);
   const RenderBatch& last_batch() const noexcept { return last_batch_; }
+  bool submit_batch(const RenderBatch& batch);
+  const RenderPlan& last_plan() const noexcept { return last_plan_; }
 
 private:
   SDL_GPUDevice* device_ = nullptr;
   SDL_Window* window_ = nullptr;
   RenderBatch last_batch_{};
+  RenderPlan last_plan_{};
   std::string last_error_;
 };
 

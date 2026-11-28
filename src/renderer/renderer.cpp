@@ -204,6 +204,7 @@ Renderer::Renderer(Renderer&& other) noexcept
     : device_(std::exchange(other.device_, nullptr)),
       window_(std::exchange(other.window_, nullptr)),
       last_batch_(std::move(other.last_batch_)),
+      last_plan_(std::move(other.last_plan_)),
       last_error_(std::move(other.last_error_)) {}
 
 Renderer& Renderer::operator=(Renderer&& other) noexcept {
@@ -212,6 +213,7 @@ Renderer& Renderer::operator=(Renderer&& other) noexcept {
   device_ = std::exchange(other.device_, nullptr);
   window_ = std::exchange(other.window_, nullptr);
   last_batch_ = std::move(other.last_batch_);
+  last_plan_ = std::move(other.last_plan_);
   last_error_ = std::move(other.last_error_);
   return *this;
 }
@@ -255,6 +257,32 @@ void Renderer::shutdown() {
 const RenderBatch& Renderer::prepare_batch(const scene::Scene& scene, float viewport_aspect) {
   last_batch_ = build_render_batch(scene, viewport_aspect);
   return last_batch_;
+}
+
+bool Renderer::submit_batch(const RenderBatch& batch) {
+  last_plan_ = plan_render_passes(batch);
+  if(!device_) {
+    last_error_ = "no active SDL_GPUDevice";
+    return false;
+  }
+
+  // shortcut: submits uniform command buffer without GPU draw passes, upgrade when compiled shaders ship in CI
+  SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device_);
+  if(!cmd) {
+    const char* err = SDL_GetError();
+    last_error_ = (err && *err) ? err : "SDL_AcquireGPUCommandBuffer failed";
+    return false;
+  }
+  SDL_PushGPUVertexUniformData(cmd, 0, &batch.view_proj, static_cast<Uint32>(sizeof(batch.view_proj)));
+  SDL_PushGPUFragmentUniformData(cmd, 0, &batch.lighting, static_cast<Uint32>(sizeof(batch.lighting)));
+  SDL_PushGPUFragmentUniformData(cmd, 1, &last_plan_.post_fx, static_cast<Uint32>(sizeof(last_plan_.post_fx)));
+  if(!SDL_SubmitGPUCommandBuffer(cmd)) {
+    const char* err = SDL_GetError();
+    last_error_ = (err && *err) ? err : "SDL_SubmitGPUCommandBuffer failed";
+    return false;
+  }
+  last_error_.clear();
+  return true;
 }
 
 }  // namespace snes2dhd::renderer
